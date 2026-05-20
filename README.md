@@ -1,42 +1,53 @@
-# DeepSeek TUI Mobile Pairing
+# DeepSeek TUI Mobile
 
-Public static pairing page for DeepSeek TUI Desktop.
+Public mobile control page for DeepSeek TUI Desktop.
 
-The desktop app remains the runtime host. It owns the PTY, DeepSeek TUI process, API keys, workspace filesystem access, and permission model. This mobile page only pairs the current browser with a user's desktop bridge and shows read-only bridge status.
+The desktop app remains the runtime host. It owns the PTY, DeepSeek TUI process, API keys, workspace filesystem access, and permission model. This mobile page pairs the current browser through DeepSeek TUI Relay, shows desktop status, and can send commands back to the desktop when mobile remote control is explicitly enabled on the desktop.
 
-It does not expose task start, task stop, terminal input, or live terminal streaming.
+Remote control stays opt-in. Pairing alone is not enough; the desktop must have both Relay and mobile remote control enabled before the mobile page can start tasks, stop tasks, or write terminal input.
 
 ## User Flow
 
 1. Open DeepSeek TUI Desktop.
 2. Open `手机控制`.
-3. Sign in with the email/account id that will be typed on the phone.
-4. Enable the bridge.
-5. Generate a phone pairing code.
-6. Open this mobile pairing page.
-7. Enter the HTTPS Bridge URL, email/account id, device name, and pairing code.
-8. Pair the phone and refresh read-only status.
+3. Enable mobile control and confirm Relay is connected.
+4. Generate a phone pairing code.
+5. Open this mobile page.
+6. Enter the six digit pairing code and confirm the device name.
+7. Pair the phone and refresh desktop status.
+8. If remote control is enabled on desktop, use the mobile control panel to start a task, send terminal input, or stop the current task.
 
-## Bridge URL
+Users do not need an email/account id, public IP, public domain, or manual Bridge URL for the v1 pairing flow.
 
-For public mobile use, the Bridge URL should be HTTPS. A typical local tunnel target is:
+## Relay
+
+The default Relay URL is `https://deepseektuidesktop.cn`. Override it for internal testing with:
 
 ```bash
-cloudflared tunnel --url http://127.0.0.1:8765
+VITE_DEEPSEEK_RELAY_URL=https://relay.example.com npm run dev
 ```
 
-Paste the generated `https://...` tunnel URL into the mobile page.
+The desktop connects outbound to Relay over WebSocket:
 
-Related public desktop domain: `https://deepseektuidesktop.cn`. If this domain is configured as the HTTPS bridge or relay entry, paste that origin into the mobile page's Bridge URL field.
+```text
+WSS /desktop/connect
+```
 
-Do not expose the bridge port directly to the public internet. A public HTTPS page will block ordinary `http://` bridge URLs because browsers enforce mixed-content rules. `http://localhost` and `http://127.0.0.1` are only intended for local development.
+The phone calls Relay over HTTPS:
+
+- `POST /api/v1/pair`
+- `GET /api/v1/status`
+- `POST /api/v1/session/start`
+- `POST /api/v1/session/stop`
+- `POST /api/v1/terminal/input`
+
+The local desktop HTTP Bridge still exists as a development surface, but `http://localhost` and `http://127.0.0.1` are not valid public mobile addresses.
 
 ## URL Prefill
 
 The page accepts these query parameters:
 
-- `bridge`: prefill the Bridge URL.
-- `account`: prefill the email/account id.
+- `relay`: override the Relay URL for development.
 - `code`: prefill the pairing code.
 - `deviceName`: prefill the local browser device name.
 
@@ -45,22 +56,12 @@ Device tokens are never accepted from URL parameters and are never displayed in 
 Example:
 
 ```text
-https://example.com/?bridge=https%3A%2F%2Fyour-tunnel.example.com&account=user%40example.com&code=123456
+https://example.com/?relay=https%3A%2F%2Frelay.example.com&code=123456
 ```
 
-## API Surface
+## Relay Worker
 
-The mobile page only calls:
-
-- `POST /api/v1/auth/pair`
-- `GET /api/v1/status`
-
-It intentionally does not call:
-
-- `GET /api/v1/events`
-- `POST /api/v1/session/start`
-- `POST /api/v1/session/stop`
-- `POST /api/v1/terminal/input`
+`relay/worker.js` contains the Cloudflare Worker / Durable Object entry for Relay v1, and `relay/wrangler.toml` contains the minimal Cloudflare deployment binding. The Relay keeps desktop WebSocket connections in the Durable Object, stores pairing-code hashes and device-token hashes, and forwards mobile commands to the paired desktop.
 
 ## Development
 

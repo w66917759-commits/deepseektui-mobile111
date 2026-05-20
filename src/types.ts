@@ -1,11 +1,13 @@
 export type PairingStage = "idle" | "ready-to-pair" | "pairing" | "paired" | "status-error";
 
 export type ConnectionState = {
-  baseUrl: string;
-  accountId: string;
+  relayUrl: string;
   deviceName: string;
   clientDeviceId: string;
   deviceToken: string;
+  deviceId: string;
+  desktopId: string;
+  relaySessionId: string;
 };
 
 export type RemoteAuthAccount = {
@@ -20,13 +22,16 @@ export type RemotePairingState = {
   codePreview: string;
   expiresAt: string;
   createdAt: string;
+  relaySessionId?: string;
 };
 
 export type RemoteDevice = {
   id: string;
   name: string;
   platform: string;
-  accountId: string;
+  accountId?: string;
+  desktopId?: string;
+  relaySessionId?: string;
   pairedAt: string;
   lastSeenAt: string;
   enabled?: boolean;
@@ -56,6 +61,8 @@ export type LastExit = {
   session?: ActiveSession | null;
 };
 
+export type RemoteSessionAction = "tui" | "continue" | "doctor" | "setup" | "mcp-init" | "sessions" | "exec" | "plan";
+
 export type UpdateNotice = {
   id: string;
   source: string;
@@ -77,6 +84,14 @@ export type RemoteBridgeStatus = {
   localUrl: string;
   lanUrl: string;
   tokenPreview: string;
+  relay?: {
+    enabled: boolean;
+    connected: boolean;
+    url: string;
+    sessionId: string;
+    lastConnectedAt: string;
+    lastError: string;
+  };
   mobileRemoteControlEnabled: boolean;
   updatePushEnabled: boolean;
   auth: RemoteAuthState;
@@ -102,6 +117,35 @@ export type PairResponse = {
   ok: boolean;
   device?: RemoteDevice;
   deviceToken?: string;
+  deviceId?: string;
+  desktopId?: string;
+  relaySessionId?: string;
   status?: RemoteBridgeStatus;
+  error?: string;
+};
+
+export type StartSessionResponse = {
+  ok: boolean;
+  result?: {
+    ok?: boolean;
+    error?: string;
+    pid?: number;
+    session?: ActiveSession;
+  };
+  status?: RemoteBridgeStatus;
+  error?: string;
+};
+
+export type StopSessionResponse = {
+  ok: boolean;
+  result?: {
+    ok?: boolean;
+  };
+  status?: RemoteBridgeStatus;
+  error?: string;
+};
+
+export type TerminalInputResponse = {
+  ok: boolean;
   error?: string;
 };

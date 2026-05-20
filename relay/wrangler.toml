@@ -1,0 +1,11 @@
+name = "deepseek-tui-relay"
+main = "worker.js"
+compatibility_date = "2026-05-20"
+
+[[durable_objects.bindings]]
+name = "DEEPSEEK_TUI_RELAY"
+class_name = "DeepSeekTuiRelay"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["DeepSeekTuiRelay"]

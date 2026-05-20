@@ -5,29 +5,44 @@ import {
   CheckCircle2,
   KeyRound,
   Link2,
+  Play,
   RefreshCw,
+  Send,
   ShieldCheck,
   Smartphone,
+  Square,
+  Terminal,
   Trash2,
   Wifi,
   WifiOff
 } from "lucide-react";
-import { BridgeError, createBridgeClient } from "./bridgeClient";
+import { createRemoteClient, RemoteError } from "./remoteClient";
 import {
   applyPairingPrefill,
-  formatBridgeTransport,
+  formatRelayTransport,
   hasPairingPrefill,
+  normalizePairingCode,
   pairingStageLabel,
   parsePairingUrlParams,
-  RELATED_DESKTOP_DOMAIN,
-  RELATED_DESKTOP_ORIGIN,
   sanitizePairingCode,
-  validateBridgeUrl
+  validateRelayUrl
 } from "./pairing";
 import { clearConnection, loadConnection, saveConnection } from "./storage";
-import type { ConnectionState, PairingStage, RemoteBridgeStatus, RemoteDevice } from "./types";
+import type { ConnectionState, PairingStage, RemoteBridgeStatus, RemoteDevice, RemoteSessionAction } from "./types";
 
 type MessageKind = "info" | "error";
+type BusyAction = "pair" | "status" | "start-session" | "terminal-input" | "stop-session";
+
+const SESSION_ACTIONS: Array<{ value: RemoteSessionAction; label: string }> = [
+  { value: "exec", label: "一次性任务" },
+  { value: "plan", label: "只做方案" },
+  { value: "tui", label: "打开 TUI" },
+  { value: "continue", label: "继续会话" },
+  { value: "sessions", label: "会话列表" },
+  { value: "doctor", label: "诊断环境" },
+  { value: "setup", label: "初始化设置" },
+  { value: "mcp-init", label: "初始化 MCP" }
+];
 
 type InitialState = {
   connection: ConnectionState;
@@ -57,20 +72,26 @@ export function App() {
   const [pairingCode, setPairingCode] = useState(initialState.pairingCode);
   const [status, setStatus] = useState<RemoteBridgeStatus | null>(null);
   const [pairedDevice, setPairedDevice] = useState<RemoteDevice | null>(null);
-  const [busy, setBusy] = useState(false);
+  const [busyAction, setBusyAction] = useState<BusyAction | null>(null);
   const [statusError, setStatusError] = useState(false);
+  const [remoteAction, setRemoteAction] = useState<RemoteSessionAction>("exec");
+  const [remotePrompt, setRemotePrompt] = useState("");
+  const [terminalInput, setTerminalInput] = useState("");
   const [message, setMessage] = useState(
     initialState.ignoredTokenParam ? "URL 中的 token 参数已忽略；设备 Token 只保存在当前浏览器。" : ""
   );
   const [messageKind, setMessageKind] = useState<MessageKind>("info");
 
   const pageProtocol = window.location.protocol;
-  const bridgeValidation = useMemo(
-    () => validateBridgeUrl(draft.baseUrl || connection.baseUrl, pageProtocol),
-    [connection.baseUrl, draft.baseUrl, pageProtocol]
+  const pageHostname = window.location.hostname;
+  const relayValidation = useMemo(
+    () => validateRelayUrl(draft.relayUrl || connection.relayUrl, pageProtocol, pageHostname),
+    [connection.relayUrl, draft.relayUrl, pageHostname, pageProtocol]
   );
-  const draftReady = Boolean(bridgeValidation.ok && draft.accountId.trim() && draft.deviceName.trim() && pairingCode.trim());
-  const stage: PairingStage = busy
+  const normalizedPairingCode = normalizePairingCode(pairingCode);
+  const draftReady = Boolean(relayValidation.ok && draft.deviceName.trim() && normalizedPairingCode.length === 6);
+  const busy = busyAction !== null;
+  const stage: PairingStage = busyAction === "pair"
     ? "pairing"
     : statusError
       ? "status-error"
@@ -80,9 +101,17 @@ export function App() {
           ? "ready-to-pair"
           : "idle";
 
-  const client = useMemo(() => createBridgeClient(connection), [connection.baseUrl, connection.deviceToken]);
-  const bridgeReady = Boolean(status?.enabled && status.running);
-  const transport = formatBridgeTransport(bridgeValidation);
+  const client = useMemo(() => createRemoteClient(connection), [connection.deviceToken, connection.relayUrl]);
+  const relayConnected = Boolean(status?.relay?.connected);
+  const remoteControlEnabled = Boolean(status?.mobileRemoteControlEnabled);
+  const remoteControlReady = Boolean(connection.deviceToken && relayConnected && remoteControlEnabled);
+  const harnessRunning = Boolean(status?.harness.running);
+  const activeSession = status?.harness.activeSession || null;
+  const promptRequired = remoteAction === "exec" || remoteAction === "plan";
+  const canStartRemoteSession = Boolean(remoteControlReady && !busy && (!promptRequired || remotePrompt.trim()));
+  const canSendTerminalInput = Boolean(remoteControlReady && harnessRunning && !busy && terminalInput.trim());
+  const canStopRemoteSession = Boolean(remoteControlReady && harnessRunning && !busy);
+  const transport = formatRelayTransport(relayValidation);
 
   const showMessage = useCallback((text: string, kind: MessageKind = "info") => {
     setMessage(text);
@@ -90,9 +119,9 @@ export function App() {
   }, []);
 
   function updateDraft<K extends keyof ConnectionState>(key: K, value: ConnectionState[K]) {
-    setDraft((current) => ({ ...current, [key]: value, deviceToken: "" }));
+    setDraft((current) => ({ ...current, [key]: value, deviceToken: "", deviceId: "", desktopId: "", relaySessionId: "" }));
     if (connection.deviceToken) {
-      setConnection((current) => ({ ...current, deviceToken: "" }));
+      setConnection((current) => ({ ...current, deviceToken: "", deviceId: "", desktopId: "", relaySessionId: "" }));
       setStatus(null);
       setPairedDevice(null);
     }
@@ -100,37 +129,38 @@ export function App() {
   }
 
   async function pairDevice() {
-    const validation = validateBridgeUrl(draft.baseUrl, pageProtocol);
+    const validation = validateRelayUrl(draft.relayUrl, pageProtocol, pageHostname);
     if (!validation.ok) {
       showMessage(validation.message, "error");
       return;
     }
-    if (!draft.accountId.trim() || !draft.deviceName.trim() || !pairingCode.trim()) {
-      showMessage("Bridge URL、邮箱标识、设备名和配对码不能为空。", "error");
+    if (!draft.deviceName.trim() || normalizedPairingCode.length !== 6) {
+      showMessage("请填写设备名，并输入桌面端显示的 6 位配对码。", "error");
       return;
     }
 
-    setBusy(true);
+    setBusyAction("pair");
     setStatusError(false);
     try {
-      const pairClient = createBridgeClient({ baseUrl: validation.baseUrl, deviceToken: "" });
+      const pairClient = createRemoteClient({ relayUrl: validation.relayUrl, deviceToken: "" });
       const result = await pairClient.pair({
-        accountId: draft.accountId,
-        pairingCode,
+        pairingCode: normalizedPairingCode,
         deviceName: draft.deviceName,
         clientDeviceId: draft.clientDeviceId
       });
 
       if (!result.ok || !result.deviceToken) {
-        throw new BridgeError(result.error || "配对失败", 400);
+        throw new RemoteError(result.error || "配对失败", 400);
       }
 
       const next: ConnectionState = {
         ...draft,
-        baseUrl: validation.baseUrl,
-        accountId: draft.accountId.trim(),
+        relayUrl: validation.relayUrl,
         deviceName: draft.deviceName.trim(),
-        deviceToken: result.deviceToken
+        deviceToken: result.deviceToken,
+        deviceId: result.deviceId || result.device?.id || "",
+        desktopId: result.desktopId || result.device?.desktopId || result.status?.auth.desktopId || "",
+        relaySessionId: result.relaySessionId || result.device?.relaySessionId || ""
       };
       saveConnection(next);
       setConnection(next);
@@ -142,23 +172,23 @@ export function App() {
     } catch (error) {
       showMessage(errorMessage(error), "error");
     } finally {
-      setBusy(false);
+      setBusyAction(null);
     }
   }
 
   async function refreshStatus() {
-    if (!connection.baseUrl || !connection.deviceToken) {
-      showMessage("请先完成设备配对。", "error");
+    if (!connection.relayUrl || !connection.deviceToken) {
+      showMessage("请先用配对码完成设备绑定。", "error");
       return;
     }
 
-    const validation = validateBridgeUrl(connection.baseUrl, pageProtocol);
+    const validation = validateRelayUrl(connection.relayUrl, pageProtocol, pageHostname);
     if (!validation.ok) {
       showMessage(validation.message, "error");
       return;
     }
 
-    setBusy(true);
+    setBusyAction("status");
     setStatusError(false);
     try {
       const result = await client.status();
@@ -169,7 +199,84 @@ export function App() {
       setStatusError(true);
       showMessage(errorMessage(error), "error");
     } finally {
-      setBusy(false);
+      setBusyAction(null);
+    }
+  }
+
+  async function startRemoteSession() {
+    if (!remoteControlReady) {
+      showMessage("请先完成配对，并在桌面端开启手机远程控制。", "error");
+      return;
+    }
+    if (promptRequired && !remotePrompt.trim()) {
+      showMessage("请输入要下发给桌面端的指令。", "error");
+      return;
+    }
+
+    setBusyAction("start-session");
+    try {
+      const result = await client.startSession({
+        action: remoteAction,
+        prompt: remotePrompt
+      });
+      if (!result.ok) {
+        throw new RemoteError(result.error || result.result?.error || "桌面端未接受该指令。", 400);
+      }
+      if (result.status) setStatus(result.status);
+      setRemotePrompt("");
+      showMessage("指令已下发到桌面端。");
+    } catch (error) {
+      showMessage(errorMessage(error), "error");
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function sendTerminalInput() {
+    if (!remoteControlReady) {
+      showMessage("请先完成配对，并在桌面端开启手机远程控制。", "error");
+      return;
+    }
+    if (!harnessRunning) {
+      showMessage("桌面端当前没有运行中的终端会话。", "error");
+      return;
+    }
+    if (!terminalInput.trim()) {
+      showMessage("请输入要发送到终端的内容。", "error");
+      return;
+    }
+
+    setBusyAction("terminal-input");
+    try {
+      const data = terminalInput.endsWith("\n") ? terminalInput : `${terminalInput}\n`;
+      const result = await client.sendTerminalInput(data);
+      if (!result.ok) {
+        throw new RemoteError(result.error || "桌面端未接受终端输入。", 400);
+      }
+      setTerminalInput("");
+      showMessage("终端输入已发送。");
+    } catch (error) {
+      showMessage(errorMessage(error), "error");
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function stopRemoteSession() {
+    if (!remoteControlReady) {
+      showMessage("请先完成配对，并在桌面端开启手机远程控制。", "error");
+      return;
+    }
+
+    setBusyAction("stop-session");
+    try {
+      const result = await client.stopSession();
+      if (result.status) setStatus(result.status);
+      showMessage(result.result?.ok === false ? "桌面端当前没有运行中的任务。" : "已请求停止桌面任务。");
+    } catch (error) {
+      showMessage(errorMessage(error), "error");
+    } finally {
+      setBusyAction(null);
     }
   }
 
@@ -192,9 +299,9 @@ export function App() {
             <Smartphone size={14} aria-hidden />
             DeepSeek TUI Mobile
           </span>
-          <h1>手机配对网页</h1>
+          <h1>手机远程控制</h1>
         </div>
-        <ConnectionPill stage={stage} ready={bridgeReady} />
+        <ConnectionPill stage={stage} ready={relayConnected} />
       </header>
 
       {message ? (
@@ -207,7 +314,7 @@ export function App() {
       <section className="panel pairing-panel">
         <div className="panel-heading">
           <div>
-            <span className="section-label">公开配对</span>
+            <span className="section-label">Relay 配对</span>
             <h2>绑定当前手机</h2>
           </div>
           <SecurityBadge tone={stageTone(stage)} label={pairingStageLabel(stage)} />
@@ -215,28 +322,23 @@ export function App() {
 
         <StepList stage={stage} />
 
-        <div className="connection-form">
-          <label>
-            Bridge URL
-            <input
-              value={draft.baseUrl}
-              onChange={(event) => updateDraft("baseUrl", event.target.value)}
-              placeholder={RELATED_DESKTOP_ORIGIN}
-              inputMode="url"
-              spellCheck={false}
-              disabled={busy}
-            />
-          </label>
+        <p className="bridge-explainer">
+          普通用户只需要输入桌面端显示的 6 位配对码。手机会通过 DeepSeek TUI Relay 连接桌面端，不需要公网 IP、域名或手动 Bridge URL。
+        </p>
 
+        <div className="connection-form">
           <div className="grid two">
             <label>
-              邮箱标识
+              配对码
               <input
-                value={draft.accountId}
-                onChange={(event) => updateDraft("accountId", event.target.value)}
-                placeholder="name@example.com"
-                inputMode="email"
-                spellCheck={false}
+                value={pairingCode}
+                onChange={(event) => {
+                  setPairingCode(sanitizePairingCode(event.target.value));
+                  setStatusError(false);
+                }}
+                placeholder="123 456"
+                inputMode="numeric"
+                autoComplete="one-time-code"
                 disabled={busy}
               />
             </label>
@@ -251,32 +353,17 @@ export function App() {
               />
             </label>
           </div>
-
-          <label className="pair-code-field">
-            配对码
-            <input
-              value={pairingCode}
-              onChange={(event) => {
-                setPairingCode(sanitizePairingCode(event.target.value));
-                setStatusError(false);
-              }}
-              placeholder="123 456"
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              disabled={busy}
-            />
-          </label>
         </div>
 
-        <p className={bridgeValidation.ok ? "inline-note" : "inline-warning"}>
-          {bridgeValidation.ok ? <CheckCircle2 size={15} aria-hidden /> : <AlertTriangle size={15} aria-hidden />}
-          {bridgeValidation.ok ? transport.detail : bridgeValidation.message}
+        <p className={relayValidation.ok ? "inline-note" : "inline-warning"}>
+          {relayValidation.ok ? <CheckCircle2 size={15} aria-hidden /> : <AlertTriangle size={15} aria-hidden />}
+          {relayValidation.ok ? transport.detail : relayValidation.message}
         </p>
 
         <div className="action-row">
           <button type="button" className="primary" onClick={pairDevice} disabled={busy || !draftReady}>
             <ShieldCheck size={16} aria-hidden />
-            {busy ? "配对中" : "配对"}
+            {busyAction === "pair" ? "配对中" : "配对"}
           </button>
           <button type="button" onClick={refreshStatus} disabled={busy || !connection.deviceToken}>
             <RefreshCw size={16} aria-hidden />
@@ -289,10 +376,122 @@ export function App() {
         </div>
       </section>
 
+      <section className="panel control-panel">
+        <div className="panel-heading">
+          <div>
+            <span className="section-label">远程下发</span>
+            <h2>手机控制桌面端</h2>
+          </div>
+          <SecurityBadge
+            tone={remoteControlReady ? "ok" : remoteControlEnabled ? "warn" : "muted"}
+            label={remoteControlReady ? "可下发" : remoteControlEnabled ? "待刷新" : "未开启"}
+          />
+        </div>
+
+        <div className="security-grid control-status-grid">
+          <StatusTile
+            icon={<Play size={16} />}
+            label="任务"
+            value={harnessRunning ? "运行中" : "空闲"}
+            tone={harnessRunning ? "warn" : "muted"}
+          />
+          <StatusTile
+            icon={<Terminal size={16} />}
+            label="会话"
+            value={activeSession ? String(activeSession.pid) : "无"}
+            tone={activeSession ? "ok" : "muted"}
+          />
+          <StatusTile
+            icon={<ShieldCheck size={16} />}
+            label="远控"
+            value={remoteControlEnabled ? "已开启" : "未开启"}
+            tone={remoteControlEnabled ? "ok" : "warn"}
+          />
+          <StatusTile icon={<Link2 size={16} />} label="Relay" value={relayConnected ? "在线" : "未确认"} tone={relayConnected ? "ok" : "muted"} />
+        </div>
+
+        <div className="control-form">
+          <div className="grid two">
+            <label>
+              执行方式
+              <select
+                value={remoteAction}
+                onChange={(event) => setRemoteAction(event.target.value as RemoteSessionAction)}
+                disabled={busy || !remoteControlReady}
+              >
+                {SESSION_ACTIONS.map((action) => (
+                  <option key={action.value} value={action.value}>
+                    {action.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label>
+              工作目录
+              <input value={activeSession?.cwd || status?.harness.lastExit?.session?.cwd || "使用桌面端当前设置"} readOnly />
+            </label>
+          </div>
+
+          <label>
+            下发指令
+            <textarea
+              value={remotePrompt}
+              onChange={(event) => setRemotePrompt(event.target.value)}
+              placeholder={promptRequired ? "例如：运行测试并总结失败原因" : "该执行方式可不填写指令"}
+              disabled={busy || !remoteControlReady}
+            />
+          </label>
+
+          <div className="action-row">
+            <button type="button" className="primary" onClick={startRemoteSession} disabled={!canStartRemoteSession}>
+              <Send size={16} aria-hidden />
+              {busyAction === "start-session" ? "下发中" : "下发任务"}
+            </button>
+            <button type="button" onClick={stopRemoteSession} disabled={!canStopRemoteSession}>
+              <Square size={16} aria-hidden />
+              {busyAction === "stop-session" ? "停止中" : "停止任务"}
+            </button>
+            <button type="button" onClick={refreshStatus} disabled={busy || !connection.deviceToken}>
+              <RefreshCw size={16} aria-hidden />
+              刷新状态
+            </button>
+          </div>
+        </div>
+
+        <div className="terminal-control">
+          <label>
+            终端输入
+            <textarea
+              value={terminalInput}
+              onChange={(event) => setTerminalInput(event.target.value)}
+              placeholder="/status"
+              disabled={busy || !remoteControlReady || !harnessRunning}
+            />
+          </label>
+          <button type="button" onClick={sendTerminalInput} disabled={!canSendTerminalInput}>
+            <Terminal size={16} aria-hidden />
+            {busyAction === "terminal-input" ? "发送中" : "发送输入"}
+          </button>
+        </div>
+
+        {status?.terminalPreview ? (
+          <pre className="terminal-preview" aria-label="最近终端输出">
+            {status.terminalPreview}
+          </pre>
+        ) : (
+          <span className="empty-state">暂无终端输出</span>
+        )}
+
+        <p className={remoteControlReady ? "inline-note" : "inline-warning"}>
+          {remoteControlReady ? <CheckCircle2 size={15} aria-hidden /> : <AlertTriangle size={15} aria-hidden />}
+          {remoteControlReady ? "手机已具备下发权限。" : "需要桌面端开启 Relay 和手机远程控制后才能下发。"}
+        </p>
+      </section>
+
       <section className="panel status-panel">
         <div className="panel-heading">
           <div>
-            <span className="section-label">只读状态</span>
+            <span className="section-label">桌面状态</span>
             <h2>桌面端连接</h2>
           </div>
           <KeyRound size={20} aria-hidden />
@@ -300,23 +499,21 @@ export function App() {
 
         <div className="security-grid">
           <StatusTile icon={<Link2 size={16} />} label="传输" value={transport.label} tone={transport.tone} />
-          <StatusTile icon={<Wifi size={16} />} label="Bridge" value={bridgeReady ? "运行中" : "未确认"} tone={bridgeReady ? "ok" : "muted"} />
+          <StatusTile icon={<Wifi size={16} />} label="Relay" value={relayConnected ? "运行中" : "未确认"} tone={relayConnected ? "ok" : "muted"} />
           <StatusTile icon={<ShieldCheck size={16} />} label="设备" value={connection.deviceToken ? "已配对" : "未配对"} tone={connection.deviceToken ? "ok" : "warn"} />
           <StatusTile
             icon={<WifiOff size={16} />}
             label="桌面控制"
             value={status?.mobileRemoteControlEnabled ? "桌面已开启" : "未开启"}
-            tone="muted"
+            tone={status?.mobileRemoteControlEnabled ? "ok" : "muted"}
           />
         </div>
 
         <div className="meta-list">
-          <InfoRow label="邮箱标识" value={connection.accountId || draft.accountId || "未填写"} />
           <InfoRow label="设备名" value={pairedDevice?.name || connection.deviceName || draft.deviceName || "未命名"} />
-          <InfoRow label="桌面账号" value={status?.auth.account?.accountId || "未刷新"} />
-          <InfoRow label="Desktop ID" value={status?.auth.desktopId || "未刷新"} />
-          <InfoRow label="Bridge URL" value={connection.baseUrl || draft.baseUrl || "未填写"} />
-          <InfoRow label="相关域名" value={RELATED_DESKTOP_DOMAIN} />
+          <InfoRow label="Desktop ID" value={connection.desktopId || status?.auth.desktopId || "未刷新"} />
+          <InfoRow label="Device ID" value={connection.deviceId || pairedDevice?.id || "未刷新"} />
+          <InfoRow label="Relay" value={connection.relayUrl || draft.relayUrl || "未配置"} />
         </div>
 
         <p className="inline-note">
@@ -340,7 +537,7 @@ function ConnectionPill({ ready, stage }: { ready: boolean; stage: PairingStage 
 
 function StepList({ stage }: { stage: PairingStage }) {
   const current = stage === "paired" ? 3 : stage === "ready-to-pair" || stage === "pairing" ? 2 : 1;
-  const steps = ["填写 Bridge URL", "输入邮箱与配对码", "刷新只读状态"];
+  const steps = ["输入配对码", "确认设备名", "刷新桌面状态"];
 
   return (
     <ol className="step-list" aria-label="配对步骤">
@@ -394,10 +591,11 @@ function stageTone(stage: PairingStage): "ok" | "warn" | "muted" {
 }
 
 function errorMessage(error: unknown): string {
-  if (error instanceof BridgeError && error.status === 0) return error.message;
-  if (error instanceof BridgeError && error.status === 400) return error.message || "配对码无效或已过期。";
-  if (error instanceof BridgeError && error.status === 401) return "认证失败，请重新配对。";
-  if (error instanceof BridgeError && error.status === 429) return "配对尝试过多，请稍后再试。";
+  if (error instanceof RemoteError && error.status === 0) return error.message;
+  if (error instanceof RemoteError && error.status === 400) return error.message || "配对码无效或已过期。";
+  if (error instanceof RemoteError && error.status === 401) return "认证失败，请重新配对。";
+  if (error instanceof RemoteError && error.status === 403) return "桌面端未开启手机远程控制，请在桌面端远程面板开启。";
+  if (error instanceof RemoteError && error.status === 429) return "配对尝试过多，请稍后再试。";
   if (error instanceof Error) return error.message;
   return "操作失败。";
 }

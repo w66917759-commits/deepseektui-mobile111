@@ -21,6 +21,7 @@ body {
 
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
@@ -64,6 +65,7 @@ button.danger {
 }
 
 input,
+select,
 textarea {
   width: 100%;
   min-width: 0;
@@ -75,6 +77,19 @@ textarea {
   outline: none;
 }
 
+select {
+  appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 50%, #53606a 50%),
+    linear-gradient(135deg, #53606a 50%, transparent 50%);
+  background-position:
+    calc(100% - 18px) 50%,
+    calc(100% - 12px) 50%;
+  background-size: 6px 6px;
+  background-repeat: no-repeat;
+  padding-right: 34px;
+}
+
 textarea {
   resize: vertical;
   min-height: 132px;
@@ -82,6 +97,7 @@ textarea {
 }
 
 input:focus,
+select:focus,
 textarea:focus,
 button:focus-visible {
   border-color: #11694d;
@@ -227,6 +243,7 @@ h2 {
 }
 
 .connection-form,
+.control-form,
 .grid {
   display: grid;
   gap: 12px;
@@ -238,6 +255,18 @@ h2 {
 
 .pair-code-field {
   margin-top: 0;
+}
+
+.bridge-explainer {
+  margin: 0 0 14px;
+  border: 1px solid #e7c9a6;
+  border-radius: 8px;
+  background: #fff7ea;
+  color: #875313;
+  padding: 11px 12px;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.45;
 }
 
 .step-list {
@@ -305,6 +334,11 @@ h2 {
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
   margin-top: 16px;
+}
+
+.control-status-grid {
+  margin-top: 0;
+  margin-bottom: 14px;
 }
 
 .status-tile {
@@ -402,6 +436,36 @@ h2 {
   text-align: center;
 }
 
+.terminal-control {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.terminal-control textarea {
+  min-height: 76px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+
+.terminal-control button {
+  width: 100%;
+}
+
+.terminal-preview {
+  max-height: 220px;
+  overflow: auto;
+  margin: 14px 0 0;
+  border: 1px solid #dce4e8;
+  border-radius: 8px;
+  background: #11181f;
+  color: #d9e4ea;
+  padding: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
 @media (min-width: 560px) {
   .grid.two {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -440,5 +504,10 @@ h2 {
 
   .security-grid {
     grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .terminal-control {
+    grid-template-columns: minmax(0, 1fr) 132px;
+    align-items: end;
   }
 }

@@ -1,22 +1,22 @@
-import { normalizeBaseUrl } from "./bridgeClient";
+import { normalizeRelayUrl } from "./remoteClient";
 import type { ConnectionState, PairingStage } from "./types";
 
 export const RELATED_DESKTOP_DOMAIN = "deepseektuidesktop.cn";
 export const RELATED_DESKTOP_ORIGIN = `https://${RELATED_DESKTOP_DOMAIN}`;
 
 export type PairingUrlPrefill = {
-  accountId: string;
-  bridgeUrl: string;
+  relayUrl: string;
   deviceName: string;
   ignoredTokenParam: boolean;
   pairingCode: string;
 };
 
-export type BridgeUrlValidation = {
-  baseUrl: string;
+export type RelayUrlValidation = {
+  relayUrl: string;
   message: string;
   ok: boolean;
   protocol: "https" | "http" | "empty" | "invalid";
+  localOnlyBlocked: boolean;
   publicHttpBlocked: boolean;
   relatedDesktopDomain: boolean;
 };
@@ -24,8 +24,7 @@ export type BridgeUrlValidation = {
 export function parsePairingUrlParams(search: string): PairingUrlPrefill {
   const params = new URLSearchParams(search);
   return {
-    accountId: (params.get("account") || "").trim(),
-    bridgeUrl: (params.get("bridge") || "").trim(),
+    relayUrl: (params.get("relay") || params.get("bridge") || "").trim(),
     deviceName: (params.get("deviceName") || "").trim(),
     ignoredTokenParam: params.has("token") || params.has("deviceToken") || params.has("device_token"),
     pairingCode: sanitizePairingCode(params.get("code") || "")
@@ -33,7 +32,7 @@ export function parsePairingUrlParams(search: string): PairingUrlPrefill {
 }
 
 export function hasPairingPrefill(prefill: PairingUrlPrefill): boolean {
-  return Boolean(prefill.accountId || prefill.bridgeUrl || prefill.deviceName || prefill.pairingCode);
+  return Boolean(prefill.relayUrl || prefill.deviceName || prefill.pairingCode);
 }
 
 export function applyPairingPrefill(
@@ -43,10 +42,12 @@ export function applyPairingPrefill(
 ): ConnectionState {
   return {
     ...connection,
-    baseUrl: prefill.bridgeUrl || connection.baseUrl,
-    accountId: prefill.accountId || connection.accountId,
+    relayUrl: prefill.relayUrl || connection.relayUrl,
     deviceName: prefill.deviceName || connection.deviceName,
-    deviceToken: clearToken ? "" : connection.deviceToken
+    deviceToken: clearToken ? "" : connection.deviceToken,
+    deviceId: clearToken ? "" : connection.deviceId,
+    desktopId: clearToken ? "" : connection.desktopId,
+    relaySessionId: clearToken ? "" : connection.relaySessionId
   };
 }
 
@@ -54,30 +55,36 @@ export function sanitizePairingCode(value: string): string {
   return value.replace(/[^\d\s]/g, "").slice(0, 7);
 }
 
-export function validateBridgeUrl(value: string, pageProtocol = "https:"): BridgeUrlValidation {
+export function normalizePairingCode(value: string): string {
+  return sanitizePairingCode(value).replace(/\s+/g, "");
+}
+
+export function validateRelayUrl(value: string, pageProtocol = "https:", pageHostname = ""): RelayUrlValidation {
   const trimmed = value.trim();
   if (!trimmed) {
     return {
-      baseUrl: "",
-      message: "请填写桌面端 Bridge URL。",
+      relayUrl: "",
+      message: "缺少 Relay 地址。",
       ok: false,
       protocol: "empty",
+      localOnlyBlocked: false,
       publicHttpBlocked: false,
       relatedDesktopDomain: false
     };
   }
 
-  let baseUrl = "";
+  let relayUrl = "";
   let parsed: URL;
   try {
-    baseUrl = normalizeBaseUrl(trimmed);
-    parsed = new URL(baseUrl);
+    relayUrl = normalizeRelayUrl(trimmed);
+    parsed = new URL(relayUrl);
   } catch {
     return {
-      baseUrl: "",
-      message: "Bridge URL 格式不正确。",
+      relayUrl: "",
+      message: "Relay 地址格式不正确。",
       ok: false,
       protocol: "invalid",
+      localOnlyBlocked: false,
       publicHttpBlocked: false,
       relatedDesktopDomain: false
     };
@@ -88,38 +95,55 @@ export function validateBridgeUrl(value: string, pageProtocol = "https:"): Bridg
 
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
     return {
-      baseUrl: "",
-      message: "Bridge URL 只支持 HTTP 或 HTTPS。",
+      relayUrl: "",
+      message: "Relay 地址只支持 HTTP 或 HTTPS。",
       ok: false,
       protocol: "invalid",
+      localOnlyBlocked: false,
       publicHttpBlocked: false,
       relatedDesktopDomain
     };
   }
 
-  const publicHttpBlocked = pageProtocol === "https:" && parsed.protocol === "http:" && !isLocalBridgeHost(parsed.hostname);
+  const relayIsLoopback = isLoopbackHost(parsed.hostname);
+  const pageIsLocal = isLoopbackHost(pageHostname);
+  if (relayIsLoopback && !pageIsLocal) {
+    return {
+      relayUrl,
+      message: "127.0.0.1 / localhost 只能用于同机开发，公开手机网页不能连接本机 Relay。",
+      ok: false,
+      protocol: parsed.protocol === "https:" ? "https" : "http",
+      localOnlyBlocked: true,
+      publicHttpBlocked: false,
+      relatedDesktopDomain
+    };
+  }
+
+  const publicHttpBlocked = pageProtocol === "https:" && parsed.protocol === "http:" && !relayIsLoopback;
   if (publicHttpBlocked) {
     return {
-      baseUrl,
-      message: "当前页面是 HTTPS，浏览器会阻止普通 HTTP Bridge。请使用 HTTPS tunnel URL。",
+      relayUrl,
+      message: "当前页面是 HTTPS，浏览器会阻止普通 HTTP Relay。请使用 HTTPS Relay。",
       ok: false,
       protocol: "http",
+      localOnlyBlocked: false,
       publicHttpBlocked: true,
       relatedDesktopDomain
     };
   }
 
   return {
-    baseUrl,
+    relayUrl,
     message: "",
     ok: true,
     protocol: parsed.protocol === "https:" ? "https" : "http",
+    localOnlyBlocked: false,
     publicHttpBlocked: false,
     relatedDesktopDomain
   };
 }
 
-export function formatBridgeTransport(validation: BridgeUrlValidation): {
+export function formatRelayTransport(validation: RelayUrlValidation): {
   detail: string;
   label: string;
   tone: "ok" | "warn" | "muted";
@@ -127,21 +151,21 @@ export function formatBridgeTransport(validation: BridgeUrlValidation): {
   if (validation.protocol === "https") {
     return {
       detail: validation.relatedDesktopDomain
-        ? `${RELATED_DESKTOP_DOMAIN} 已作为相关桌面端域名识别，可用于公开部署的手机网页。`
-        : "HTTPS Bridge URL 可用于公开部署的手机网页。",
-      label: "HTTPS",
+        ? `${RELATED_DESKTOP_DOMAIN} Relay 已识别，手机会通过云端中继连接桌面端。`
+        : "HTTPS Relay 可用于公开部署的手机网页。",
+      label: "Relay",
       tone: "ok"
     };
   }
   if (validation.protocol === "http" && validation.ok) {
     return {
-      detail: "HTTP Bridge 仅适合本地开发或浏览器允许的 localhost 场景。",
-      label: "HTTP",
+      detail: "HTTP Relay 仅适合同机开发，不适合公开手机网页。",
+      label: "Dev Relay",
       tone: "warn"
     };
   }
   return {
-    detail: validation.message || "Bridge URL 未确认。",
+    detail: validation.message || "Relay 未确认。",
     label: "未确认",
     tone: "muted"
   };
@@ -155,7 +179,7 @@ export function pairingStageLabel(stage: PairingStage): string {
   return "待填写";
 }
 
-function isLocalBridgeHost(hostname: string): boolean {
+function isLoopbackHost(hostname: string): boolean {
   return hostname === "localhost"
     || hostname === "127.0.0.1"
     || hostname === "::1"

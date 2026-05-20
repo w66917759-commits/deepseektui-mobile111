@@ -1,30 +1,32 @@
 import { describe, expect, it } from "vitest";
 import {
   applyPairingPrefill,
-  formatBridgeTransport,
+  formatRelayTransport,
+  normalizePairingCode,
   parsePairingUrlParams,
   sanitizePairingCode,
-  validateBridgeUrl
+  validateRelayUrl
 } from "../src/pairing";
 import type { ConnectionState } from "../src/types";
 
 const baseConnection: ConnectionState = {
-  accountId: "",
-  baseUrl: "",
   clientDeviceId: "web-device",
+  desktopId: "desktop_1",
+  deviceId: "device_1",
   deviceName: "Mobile Web",
-  deviceToken: "saved-token"
+  deviceToken: "saved-token",
+  relaySessionId: "relay_session_1",
+  relayUrl: "https://relay.example.com"
 };
 
 describe("pairing url prefill", () => {
   it("prefills only safe values and ignores token params", () => {
     const prefill = parsePairingUrlParams(
-      "?bridge=https%3A%2F%2Fbridge.example.com&account=User%40Example.com&code=12a3%20456&deviceName=iPhone&token=leak&deviceToken=leak2"
+      "?relay=https%3A%2F%2Frelay.example.com&account=ignored%40example.com&code=12a3%20456&deviceName=iPhone&token=leak&deviceToken=leak2"
     );
 
     expect(prefill).toEqual({
-      accountId: "User@Example.com",
-      bridgeUrl: "https://bridge.example.com",
+      relayUrl: "https://relay.example.com",
       deviceName: "iPhone",
       ignoredTokenParam: true,
       pairingCode: "123 456"
@@ -32,57 +34,67 @@ describe("pairing url prefill", () => {
   });
 
   it("clears saved device token when a pairing link starts a fresh pairing", () => {
-    const prefill = parsePairingUrlParams("?bridge=https%3A%2F%2Fbridge.example.com&account=user%40example.com");
+    const prefill = parsePairingUrlParams("?relay=https%3A%2F%2Frelay.example.com&code=123456");
     const next = applyPairingPrefill(baseConnection, prefill, true);
 
-    expect(next.baseUrl).toBe("https://bridge.example.com");
-    expect(next.accountId).toBe("user@example.com");
+    expect(next.relayUrl).toBe("https://relay.example.com");
     expect(next.deviceToken).toBe("");
+    expect(next.deviceId).toBe("");
+    expect(next.desktopId).toBe("");
     expect(next.clientDeviceId).toBe("web-device");
   });
 });
 
-describe("bridge url validation", () => {
-  it("accepts HTTPS bridge urls for public pages", () => {
-    const validation = validateBridgeUrl("bridge.example.com/path/", "https:");
+describe("relay url validation", () => {
+  it("accepts HTTPS relay urls for public pages", () => {
+    const validation = validateRelayUrl("relay.example.com/path/", "https:");
 
     expect(validation.ok).toBe(true);
-    expect(validation.baseUrl).toBe("https://bridge.example.com/path");
-    expect(formatBridgeTransport(validation)).toMatchObject({ label: "HTTPS", tone: "ok" });
+    expect(validation.relayUrl).toBe("https://relay.example.com/path");
+    expect(formatRelayTransport(validation)).toMatchObject({ label: "Relay", tone: "ok" });
   });
 
   it("recognizes the related DeepSeek TUI Desktop domain", () => {
-    const validation = validateBridgeUrl("deepseektuidesktop.cn", "https:");
+    const validation = validateRelayUrl("deepseektuidesktop.cn", "https:");
 
     expect(validation.ok).toBe(true);
-    expect(validation.baseUrl).toBe("https://deepseektuidesktop.cn");
+    expect(validation.relayUrl).toBe("https://deepseektuidesktop.cn");
     expect(validation.relatedDesktopDomain).toBe(true);
-    expect(formatBridgeTransport(validation).detail).toContain("deepseektuidesktop.cn");
+    expect(formatRelayTransport(validation).detail).toContain("deepseektuidesktop.cn");
   });
 
-  it("blocks public HTTP bridge urls from an HTTPS page", () => {
-    const validation = validateBridgeUrl("http://bridge.example.com", "https:");
+  it("blocks public HTTP relay urls from an HTTPS page", () => {
+    const validation = validateRelayUrl("http://relay.example.com", "https:");
 
     expect(validation.ok).toBe(false);
     expect(validation.publicHttpBlocked).toBe(true);
     expect(validation.message).toContain("HTTPS");
   });
 
-  it("allows localhost HTTP for development", () => {
-    const validation = validateBridgeUrl("http://127.0.0.1:8765", "https:");
+  it("blocks localhost relay urls from public mobile pages", () => {
+    const validation = validateRelayUrl("http://127.0.0.1:8787", "https:", "mobile.example.com");
 
-    expect(validation.ok).toBe(true);
-    expect(formatBridgeTransport(validation)).toMatchObject({ label: "HTTP", tone: "warn" });
+    expect(validation.ok).toBe(false);
+    expect(validation.localOnlyBlocked).toBe(true);
+    expect(validation.message).toContain("公开手机网页");
   });
 
-  it("rejects empty and malformed bridge urls", () => {
-    expect(validateBridgeUrl("", "https:")).toMatchObject({ ok: false, protocol: "empty" });
-    expect(validateBridgeUrl("https://", "https:")).toMatchObject({ ok: false, protocol: "invalid" });
+  it("allows localhost HTTP for same-machine development", () => {
+    const validation = validateRelayUrl("http://127.0.0.1:8787", "https:", "localhost");
+
+    expect(validation.ok).toBe(true);
+    expect(formatRelayTransport(validation)).toMatchObject({ label: "Dev Relay", tone: "warn" });
+  });
+
+  it("rejects empty and malformed relay urls", () => {
+    expect(validateRelayUrl("", "https:")).toMatchObject({ ok: false, protocol: "empty" });
+    expect(validateRelayUrl("https://", "https:")).toMatchObject({ ok: false, protocol: "invalid" });
   });
 });
 
 describe("pairing code sanitization", () => {
   it("keeps only digits and spacing within a six digit display shape", () => {
     expect(sanitizePairingCode("12a 3456xyz9")).toBe("12 3456");
+    expect(normalizePairingCode("12a 3456xyz9")).toBe("123456");
   });
 });
