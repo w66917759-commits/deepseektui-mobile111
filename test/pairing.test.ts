@@ -60,7 +60,7 @@ describe("relay url validation", () => {
     expect(validation.ok).toBe(true);
     expect(validation.relayUrl).toBe("https://deepseektuidesktop.cn");
     expect(validation.relatedDesktopDomain).toBe(true);
-    expect(formatRelayTransport(validation).detail).toContain("deepseektuidesktop.cn");
+    expect(formatRelayTransport(validation).detail).toContain("Relay");
   });
 
   it("blocks public HTTP relay urls from an HTTPS page", () => {

@@ -3,7 +3,6 @@ import type { ReactNode } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
-  KeyRound,
   Link2,
   Play,
   RefreshCw,
@@ -299,7 +298,7 @@ export function App() {
             <Smartphone size={14} aria-hidden />
             DeepSeek TUI Mobile
           </span>
-          <h1>手机远程控制</h1>
+          <h1>手机控制</h1>
         </div>
         <ConnectionPill stage={stage} ready={relayConnected} />
       </header>
@@ -319,12 +318,6 @@ export function App() {
           </div>
           <SecurityBadge tone={stageTone(stage)} label={pairingStageLabel(stage)} />
         </div>
-
-        <StepList stage={stage} />
-
-        <p className="bridge-explainer">
-          普通用户只需要输入桌面端显示的 6 位配对码。手机会通过 DeepSeek TUI Relay 连接桌面端，不需要公网 IP、域名或手动 Bridge URL。
-        </p>
 
         <div className="connection-form">
           <div className="grid two">
@@ -360,58 +353,62 @@ export function App() {
           {relayValidation.ok ? transport.detail : relayValidation.message}
         </p>
 
-        <div className="action-row">
+        <div className="primary-action">
           <button type="button" className="primary" onClick={pairDevice} disabled={busy || !draftReady}>
             <ShieldCheck size={16} aria-hidden />
             {busyAction === "pair" ? "配对中" : "配对"}
           </button>
-          <button type="button" onClick={refreshStatus} disabled={busy || !connection.deviceToken}>
-            <RefreshCw size={16} aria-hidden />
-            刷新状态
-          </button>
-          <button type="button" className="danger" onClick={resetConnection} disabled={busy}>
-            <Trash2 size={16} aria-hidden />
-            清除本机配对
-          </button>
         </div>
+
+        {connection.deviceToken ? (
+          <div className="secondary-actions">
+            <button type="button" className="quiet" onClick={refreshStatus} disabled={busy}>
+              <RefreshCw size={15} aria-hidden />
+              刷新
+            </button>
+            <button type="button" className="quiet danger" onClick={resetConnection} disabled={busy}>
+              <Trash2 size={15} aria-hidden />
+              清除
+            </button>
+          </div>
+        ) : null}
       </section>
 
-      <section className="panel control-panel">
-        <div className="panel-heading">
-          <div>
-            <span className="section-label">远程下发</span>
-            <h2>手机控制桌面端</h2>
-          </div>
+      <details className="panel mobile-details control-panel" open={remoteControlReady || harnessRunning}>
+        <summary>
+          <span>
+            <small>远程下发</small>
+            <strong>控制桌面端</strong>
+          </span>
           <SecurityBadge
             tone={remoteControlReady ? "ok" : remoteControlEnabled ? "warn" : "muted"}
             label={remoteControlReady ? "可下发" : remoteControlEnabled ? "待刷新" : "未开启"}
           />
-        </div>
+        </summary>
 
-        <div className="security-grid control-status-grid">
-          <StatusTile
-            icon={<Play size={16} />}
-            label="任务"
-            value={harnessRunning ? "运行中" : "空闲"}
-            tone={harnessRunning ? "warn" : "muted"}
-          />
-          <StatusTile
-            icon={<Terminal size={16} />}
-            label="会话"
-            value={activeSession ? String(activeSession.pid) : "无"}
-            tone={activeSession ? "ok" : "muted"}
-          />
-          <StatusTile
-            icon={<ShieldCheck size={16} />}
-            label="远控"
-            value={remoteControlEnabled ? "已开启" : "未开启"}
-            tone={remoteControlEnabled ? "ok" : "warn"}
-          />
-          <StatusTile icon={<Link2 size={16} />} label="Relay" value={relayConnected ? "在线" : "未确认"} tone={relayConnected ? "ok" : "muted"} />
-        </div>
+        <div className="details-body">
+          <div className="status-strip">
+            <StatusChip
+              icon={<Link2 size={15} />}
+              label="Relay"
+              value={relayConnected ? "在线" : "未确认"}
+              tone={relayConnected ? "ok" : "muted"}
+            />
+            <StatusChip
+              icon={<ShieldCheck size={15} />}
+              label="远控"
+              value={remoteControlEnabled ? "开启" : "关闭"}
+              tone={remoteControlEnabled ? "ok" : "warn"}
+            />
+            <StatusChip
+              icon={<Play size={16} />}
+              label="任务"
+              value={harnessRunning ? "运行中" : "空闲"}
+              tone={harnessRunning ? "warn" : "muted"}
+            />
+          </div>
 
-        <div className="control-form">
-          <div className="grid two">
+          <div className="control-form">
             <label>
               执行方式
               <select
@@ -426,101 +423,95 @@ export function App() {
                 ))}
               </select>
             </label>
+
             <label>
-              工作目录
-              <input value={activeSession?.cwd || status?.harness.lastExit?.session?.cwd || "使用桌面端当前设置"} readOnly />
+              下发指令
+              <textarea
+                value={remotePrompt}
+                onChange={(event) => setRemotePrompt(event.target.value)}
+                placeholder={promptRequired ? "例如：运行测试并总结失败原因" : "该执行方式可不填写指令"}
+                disabled={busy || !remoteControlReady}
+              />
             </label>
+
+            <div className="primary-action">
+              <button type="button" className="primary" onClick={startRemoteSession} disabled={!canStartRemoteSession}>
+                <Send size={16} aria-hidden />
+                {busyAction === "start-session" ? "下发中" : "下发任务"}
+              </button>
+            </div>
+
+            {harnessRunning ? (
+              <button type="button" className="quiet" onClick={stopRemoteSession} disabled={!canStopRemoteSession}>
+                <Square size={15} aria-hidden />
+                {busyAction === "stop-session" ? "停止中" : "停止任务"}
+              </button>
+            ) : null}
           </div>
 
-          <label>
-            下发指令
-            <textarea
-              value={remotePrompt}
-              onChange={(event) => setRemotePrompt(event.target.value)}
-              placeholder={promptRequired ? "例如：运行测试并总结失败原因" : "该执行方式可不填写指令"}
-              disabled={busy || !remoteControlReady}
-            />
-          </label>
+          <details className="mini-details">
+            <summary>
+              <Terminal size={15} aria-hidden />
+              终端输入
+            </summary>
+            <div className="terminal-control">
+              <label>
+                输入内容
+                <textarea
+                  value={terminalInput}
+                  onChange={(event) => setTerminalInput(event.target.value)}
+                  placeholder="/status"
+                  disabled={busy || !remoteControlReady || !harnessRunning}
+                />
+              </label>
+              <button type="button" onClick={sendTerminalInput} disabled={!canSendTerminalInput}>
+                <Terminal size={16} aria-hidden />
+                {busyAction === "terminal-input" ? "发送中" : "发送输入"}
+              </button>
+            </div>
+          </details>
 
-          <div className="action-row">
-            <button type="button" className="primary" onClick={startRemoteSession} disabled={!canStartRemoteSession}>
-              <Send size={16} aria-hidden />
-              {busyAction === "start-session" ? "下发中" : "下发任务"}
-            </button>
-            <button type="button" onClick={stopRemoteSession} disabled={!canStopRemoteSession}>
-              <Square size={16} aria-hidden />
-              {busyAction === "stop-session" ? "停止中" : "停止任务"}
-            </button>
-            <button type="button" onClick={refreshStatus} disabled={busy || !connection.deviceToken}>
-              <RefreshCw size={16} aria-hidden />
-              刷新状态
-            </button>
+          {status?.terminalPreview ? (
+            <details className="mini-details">
+              <summary>最近终端输出</summary>
+              <pre className="terminal-preview" aria-label="最近终端输出">
+                {status.terminalPreview}
+              </pre>
+            </details>
+          ) : null}
+
+          <p className={remoteControlReady ? "inline-note" : "inline-warning"}>
+            {remoteControlReady ? <CheckCircle2 size={15} aria-hidden /> : <AlertTriangle size={15} aria-hidden />}
+            {remoteControlReady ? "手机已具备下发权限。" : "需要桌面端开启 Relay 和手机远程控制后才能下发。"}
+          </p>
+        </div>
+      </details>
+
+      <details className="panel mobile-details status-panel">
+        <summary>
+          <span>
+            <small>桌面状态</small>
+            <strong>{connection.deviceToken ? "设备已绑定" : "未绑定设备"}</strong>
+          </span>
+          <SecurityBadge tone={connection.deviceToken ? "ok" : "muted"} label={transport.label} />
+        </summary>
+
+        <div className="details-body">
+          <div className="meta-list">
+            <InfoRow label="设备名" value={pairedDevice?.name || connection.deviceName || draft.deviceName || "未命名"} />
+            <InfoRow label="任务" value={harnessRunning ? `运行中${activeSession ? ` · ${activeSession.pid}` : ""}` : "空闲"} />
+            <InfoRow label="工作目录" value={activeSession?.cwd || status?.harness.lastExit?.session?.cwd || "使用桌面端当前设置"} />
+            <InfoRow label="Desktop ID" value={connection.desktopId || status?.auth.desktopId || "未刷新"} />
+            <InfoRow label="Device ID" value={connection.deviceId || pairedDevice?.id || "未刷新"} />
+            <InfoRow label="Relay" value={connection.relayUrl || draft.relayUrl || "未配置"} />
           </div>
+
+          <p className="inline-note">
+            <CheckCircle2 size={15} aria-hidden />
+            设备 Token 不在页面展示；撤销设备请回到桌面端手机配对面板。
+          </p>
         </div>
-
-        <div className="terminal-control">
-          <label>
-            终端输入
-            <textarea
-              value={terminalInput}
-              onChange={(event) => setTerminalInput(event.target.value)}
-              placeholder="/status"
-              disabled={busy || !remoteControlReady || !harnessRunning}
-            />
-          </label>
-          <button type="button" onClick={sendTerminalInput} disabled={!canSendTerminalInput}>
-            <Terminal size={16} aria-hidden />
-            {busyAction === "terminal-input" ? "发送中" : "发送输入"}
-          </button>
-        </div>
-
-        {status?.terminalPreview ? (
-          <pre className="terminal-preview" aria-label="最近终端输出">
-            {status.terminalPreview}
-          </pre>
-        ) : (
-          <span className="empty-state">暂无终端输出</span>
-        )}
-
-        <p className={remoteControlReady ? "inline-note" : "inline-warning"}>
-          {remoteControlReady ? <CheckCircle2 size={15} aria-hidden /> : <AlertTriangle size={15} aria-hidden />}
-          {remoteControlReady ? "手机已具备下发权限。" : "需要桌面端开启 Relay 和手机远程控制后才能下发。"}
-        </p>
-      </section>
-
-      <section className="panel status-panel">
-        <div className="panel-heading">
-          <div>
-            <span className="section-label">桌面状态</span>
-            <h2>桌面端连接</h2>
-          </div>
-          <KeyRound size={20} aria-hidden />
-        </div>
-
-        <div className="security-grid">
-          <StatusTile icon={<Link2 size={16} />} label="传输" value={transport.label} tone={transport.tone} />
-          <StatusTile icon={<Wifi size={16} />} label="Relay" value={relayConnected ? "运行中" : "未确认"} tone={relayConnected ? "ok" : "muted"} />
-          <StatusTile icon={<ShieldCheck size={16} />} label="设备" value={connection.deviceToken ? "已配对" : "未配对"} tone={connection.deviceToken ? "ok" : "warn"} />
-          <StatusTile
-            icon={<WifiOff size={16} />}
-            label="桌面控制"
-            value={status?.mobileRemoteControlEnabled ? "桌面已开启" : "未开启"}
-            tone={status?.mobileRemoteControlEnabled ? "ok" : "muted"}
-          />
-        </div>
-
-        <div className="meta-list">
-          <InfoRow label="设备名" value={pairedDevice?.name || connection.deviceName || draft.deviceName || "未命名"} />
-          <InfoRow label="Desktop ID" value={connection.desktopId || status?.auth.desktopId || "未刷新"} />
-          <InfoRow label="Device ID" value={connection.deviceId || pairedDevice?.id || "未刷新"} />
-          <InfoRow label="Relay" value={connection.relayUrl || draft.relayUrl || "未配置"} />
-        </div>
-
-        <p className="inline-note">
-          <CheckCircle2 size={15} aria-hidden />
-          设备 Token 不在页面展示；撤销设备请回到桌面端手机配对面板。
-        </p>
-      </section>
+      </details>
     </main>
   );
 }
@@ -535,27 +526,11 @@ function ConnectionPill({ ready, stage }: { ready: boolean; stage: PairingStage 
   );
 }
 
-function StepList({ stage }: { stage: PairingStage }) {
-  const current = stage === "paired" ? 3 : stage === "ready-to-pair" || stage === "pairing" ? 2 : 1;
-  const steps = ["输入配对码", "确认设备名", "刷新桌面状态"];
-
-  return (
-    <ol className="step-list" aria-label="配对步骤">
-      {steps.map((step, index) => (
-        <li key={step} className={index + 1 <= current ? "active" : ""}>
-          <span>{index + 1}</span>
-          <strong>{step}</strong>
-        </li>
-      ))}
-    </ol>
-  );
-}
-
 function SecurityBadge({ label, tone }: { label: string; tone: "ok" | "warn" | "muted" }) {
   return <span className={`security-badge ${tone}`}>{label}</span>;
 }
 
-function StatusTile({
+function StatusChip({
   icon,
   label,
   tone,
@@ -567,7 +542,7 @@ function StatusTile({
   value: string;
 }) {
   return (
-    <div className={`status-tile ${tone}`}>
+    <div className={`status-chip ${tone}`}>
       <span>{icon}</span>
       <small>{label}</small>
       <strong>{value}</strong>

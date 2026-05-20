@@ -8,7 +8,8 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "build": "tsc --noEmit && vite build",
-    "preview": "vite preview --host 0.0.0.0"
+    "preview": "vite preview --host 0.0.0.0",
+    "diagnose:local": "node scripts/diagnose-local-link.cjs"
   },
   "dependencies": {
     "lucide-react": "^0.468.0",

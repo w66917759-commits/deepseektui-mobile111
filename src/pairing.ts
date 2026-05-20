@@ -151,15 +151,15 @@ export function formatRelayTransport(validation: RelayUrlValidation): {
   if (validation.protocol === "https") {
     return {
       detail: validation.relatedDesktopDomain
-        ? `${RELATED_DESKTOP_DOMAIN} Relay 已识别，手机会通过云端中继连接桌面端。`
-        : "HTTPS Relay 可用于公开部署的手机网页。",
+        ? "通过 DeepSeek TUI Relay 连接桌面端。"
+        : "HTTPS Relay 已就绪。",
       label: "Relay",
       tone: "ok"
     };
   }
   if (validation.protocol === "http" && validation.ok) {
     return {
-      detail: "HTTP Relay 仅适合同机开发，不适合公开手机网页。",
+      detail: "HTTP Relay 仅用于同机开发。",
       label: "Dev Relay",
       tone: "warn"
     };
