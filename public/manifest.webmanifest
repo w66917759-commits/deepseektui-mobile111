@@ -1,0 +1,18 @@
+{
+  "name": "DeepSeek TUI Mobile",
+  "short_name": "DS TUI",
+  "description": "Public pairing page for DeepSeek TUI Desktop.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#101418",
+  "theme_color": "#101418",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/icon.svg",
+      "sizes": "192x192",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
