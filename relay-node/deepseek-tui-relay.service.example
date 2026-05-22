@@ -1,0 +1,21 @@
+[Unit]
+Description=DeepSeek TUI Relay
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/deepseek-tui-relay
+Environment=NODE_ENV=production
+Environment=PUBLIC_ORIGIN=https://relay.deepseektuidesktop.cn
+Environment=ALLOWED_ORIGINS=https://deepseektuidesktop.cn
+Environment=RELAY_DATA_DIR=/var/lib/deepseek-tui-relay
+Environment=HOST=127.0.0.1
+Environment=PORT=8787
+ExecStart=/usr/bin/npm start
+Restart=always
+RestartSec=3
+User=www-data
+Group=www-data
+
+[Install]
+WantedBy=multi-user.target

@@ -21,7 +21,7 @@ Users do not need an email/account id, public IP, public domain, or manual Bridg
 
 ## Relay
 
-The default Relay URL is `https://deepseektuidesktop.cn`. Override it for internal testing with:
+The default Relay URL is `https://relay.deepseektuidesktop.cn`. Override it for internal testing with:
 
 ```bash
 VITE_DEEPSEEK_RELAY_URL=https://relay.example.com npm run dev
@@ -56,7 +56,7 @@ Device tokens are never accepted from URL parameters and are never displayed in 
 Example:
 
 ```text
-https://example.com/?relay=https%3A%2F%2Frelay.example.com&code=123456
+https://deepseektuidesktop.cn/?relay=https%3A%2F%2Frelay.deepseektuidesktop.cn&code=123456
 ```
 
 ## Relay Worker

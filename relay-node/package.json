@@ -1,0 +1,17 @@
+{
+  "name": "deepseek-tui-relay-node",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Node.js Relay service for DeepSeek TUI Desktop mobile control.",
+  "main": "server.cjs",
+  "scripts": {
+    "start": "node server.cjs",
+    "test:smoke": "node scripts/smoke-test.cjs"
+  },
+  "dependencies": {
+    "ws": "^8.20.1"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

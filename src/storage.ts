@@ -3,7 +3,7 @@ import type { ConnectionState } from "./types";
 const STORAGE_KEY = "deepseektui.mobile.connection.v2";
 const LEGACY_STORAGE_KEY = "deepseektui.mobile.connection.v1";
 
-export const DEFAULT_RELAY_URL = "https://deepseektuidesktop.cn";
+export const DEFAULT_RELAY_URL = "https://relay.deepseektuidesktop.cn";
 
 export function configuredRelayUrl(): string {
   return (import.meta.env.VITE_DEEPSEEK_RELAY_URL || DEFAULT_RELAY_URL).trim();
