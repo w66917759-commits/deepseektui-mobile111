@@ -7,7 +7,7 @@ Type=simple
 WorkingDirectory=/opt/deepseek-tui-relay
 Environment=NODE_ENV=production
 Environment=PUBLIC_ORIGIN=https://relay.deepseektuidesktop.cn
-Environment=ALLOWED_ORIGINS=https://deepseektuidesktop.cn
+Environment=ALLOWED_ORIGINS=https://deepseektuidesktop.cn,https://www.deepseektuidesktop.cn
 Environment=RELAY_DATA_DIR=/var/lib/deepseek-tui-relay
 Environment=HOST=127.0.0.1
 Environment=PORT=8787

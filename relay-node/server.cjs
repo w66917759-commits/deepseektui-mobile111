@@ -16,6 +16,7 @@ const COMMAND_TIMEOUT_MS = Number(process.env.COMMAND_TIMEOUT_MS || 30_000);
 const MAX_BODY_BYTES = 1024 * 1024;
 const DEFAULT_ALLOWED_ORIGINS = [
   "https://deepseektuidesktop.cn",
+  "https://www.deepseektuidesktop.cn",
   "http://localhost:5173",
   "http://127.0.0.1:5173"
 ];

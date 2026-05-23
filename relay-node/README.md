@@ -39,6 +39,12 @@ PORT=8787 \
 npm start
 ```
 
+If the mobile page is opened from the `www` hostname, include both origins:
+
+```bash
+ALLOWED_ORIGINS=https://deepseektuidesktop.cn,https://www.deepseektuidesktop.cn
+```
+
 ## Nginx
 
 Use `nginx.conf.example` as the site config. The important part is preserving WebSocket upgrade headers for `/desktop/connect`.
