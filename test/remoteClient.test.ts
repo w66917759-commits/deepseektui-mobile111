@@ -139,7 +139,7 @@ describe("createRemoteClient", () => {
       if (url === "https://relay.deepseektuidesktop.cn/api/v1/status") {
         throw new TypeError("network failed");
       }
-      expect(url).toBe("https://deepseektuidesktop.cn/api/relay/api/v1/status");
+      expect(url).toBe("https://deepseektuidesktop.cn/api/relay?path=%2Fapi%2Fv1%2Fstatus");
       expect(new Headers(init?.headers).get("authorization")).toBe("Bearer device-token");
       return new Response(JSON.stringify({
         ok: true,

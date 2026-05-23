@@ -14,7 +14,7 @@ export default async function handler(request, response) {
     return;
   }
 
-  const relayPath = relayPathFromRequest(request);
+  const relayPath = String(request.query?.path || "");
   if (!relayPath.startsWith("/api/v1/")) {
     response.status(404).json({ ok: false, error: "Not found" });
     return;
@@ -41,14 +41,6 @@ export default async function handler(request, response) {
   } catch {
     response.status(502).json({ ok: false, error: "Relay proxy failed" });
   }
-}
-
-function relayPathFromRequest(request) {
-  const path = request.query?.path;
-  const pathname = Array.isArray(path) ? path.join("/") : String(path || "");
-  const queryIndex = request.url.indexOf("?");
-  const query = queryIndex >= 0 ? request.url.slice(queryIndex) : "";
-  return `/${pathname}${query}`;
 }
 
 function relayHeaders(request, body) {

@@ -37,7 +37,6 @@ export function normalizeRelayUrl(value: string): string {
 export function createRemoteClient(connection: Pick<ConnectionState, "relayUrl" | "deviceToken">) {
   const relayUrl = normalizeRelayUrl(connection.relayUrl);
   const deviceToken = connection.deviceToken.trim();
-  const fallbackRelayUrl = browserProxyRelayUrl(relayUrl);
 
   async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     if (!relayUrl) {
@@ -57,11 +56,12 @@ export function createRemoteClient(connection: Pick<ConnectionState, "relayUrl" 
     try {
       response = await fetch(`${relayUrl}${path}`, { ...init, headers });
     } catch (primaryError) {
-      if (!fallbackRelayUrl) {
+      const fallbackUrl = browserProxyRelayRequestUrl(relayUrl, path);
+      if (!fallbackUrl) {
         throw new RemoteError("无法连接 DeepSeek TUI Relay", 0);
       }
       try {
-        response = await fetch(`${fallbackRelayUrl}${path}`, { ...init, headers });
+        response = await fetch(fallbackUrl, { ...init, headers });
       } catch {
         throw primaryError instanceof RemoteError
           ? primaryError
@@ -156,7 +156,7 @@ export function createRemoteClient(connection: Pick<ConnectionState, "relayUrl" 
   };
 }
 
-function browserProxyRelayUrl(relayUrl: string): string {
+function browserProxyRelayRequestUrl(relayUrl: string, path: string): string {
   if (!relayUrl || typeof window === "undefined") return "";
 
   let parsed: URL;
@@ -167,7 +167,7 @@ function browserProxyRelayUrl(relayUrl: string): string {
   }
 
   if (parsed.hostname !== "relay.deepseektuidesktop.cn") return "";
-  return `${window.location.origin}/api/relay`;
+  return `${window.location.origin}/api/relay?path=${encodeURIComponent(path)}`;
 }
 
 async function readPayload(response: Response): Promise<{ error?: string; [key: string]: unknown }> {
