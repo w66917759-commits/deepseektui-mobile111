@@ -1,4 +1,8 @@
-const DEFAULT_RELAY_TARGET = "https://relay.deepseektuidesktop.cn";
+import https from "node:https";
+
+const DEFAULT_RELAY_HOST = "121.40.54.226";
+const DEFAULT_RELAY_SERVER_NAME = "relay.deepseektuidesktop.cn";
+const DEFAULT_RELAY_PORT = 443;
 const DEFAULT_RELAY_ORIGIN = "https://deepseektuidesktop.cn";
 const MAX_BODY_BYTES = 1024 * 1024;
 
@@ -20,7 +24,6 @@ export default async function handler(request, response) {
     return;
   }
 
-  const target = new URL(relayPath, process.env.RELAY_TARGET_ORIGIN || DEFAULT_RELAY_TARGET);
   const body = request.method === "POST" ? await readBody(request) : undefined;
   if (body && body.length > MAX_BODY_BYTES) {
     response.status(413).json({ ok: false, error: "Request body too large" });
@@ -28,19 +31,54 @@ export default async function handler(request, response) {
   }
 
   try {
-    const relayResponse = await fetch(target, {
-      method: request.method,
-      headers: relayHeaders(request, body),
-      body
-    });
-    const text = await relayResponse.text();
-    response.status(relayResponse.status);
+    const relayResponse = await forwardToRelay(request, relayPath, body);
+    response.status(relayResponse.statusCode || 502);
     response.setHeader("cache-control", "no-store");
-    response.setHeader("content-type", relayResponse.headers.get("content-type") || "application/json; charset=utf-8");
-    response.send(text);
-  } catch {
-    response.status(502).json({ ok: false, error: "Relay proxy failed" });
+    response.setHeader("content-type", relayResponse.headers["content-type"] || "application/json; charset=utf-8");
+    response.send(relayResponse.body);
+  } catch (error) {
+    response.status(502).json({
+      ok: false,
+      error: "Relay proxy failed",
+      detail: error instanceof Error ? error.message : "unknown"
+    });
   }
+}
+
+function forwardToRelay(request, relayPath, body) {
+  return new Promise((resolve, reject) => {
+    const servername = process.env.RELAY_TARGET_SERVER_NAME || DEFAULT_RELAY_SERVER_NAME;
+    const headers = {
+      ...relayHeaders(request, body),
+      host: servername
+    };
+    if (body) headers["content-length"] = String(body.length);
+
+    const relayRequest = https.request({
+      hostname: process.env.RELAY_TARGET_HOST || DEFAULT_RELAY_HOST,
+      port: Number(process.env.RELAY_TARGET_PORT || DEFAULT_RELAY_PORT),
+      servername,
+      path: relayPath,
+      method: request.method,
+      headers,
+      timeout: 20_000
+    }, (relayResponse) => {
+      const chunks = [];
+      relayResponse.on("data", (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+      relayResponse.on("end", () => {
+        resolve({
+          body: Buffer.concat(chunks),
+          headers: relayResponse.headers,
+          statusCode: relayResponse.statusCode
+        });
+      });
+    });
+
+    relayRequest.on("timeout", () => relayRequest.destroy(new Error("Relay proxy timed out")));
+    relayRequest.on("error", reject);
+    if (body) relayRequest.write(body);
+    relayRequest.end();
+  });
 }
 
 function relayHeaders(request, body) {
