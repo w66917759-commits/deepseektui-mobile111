@@ -132,17 +132,17 @@ describe("RelayRegistry", () => {
       pairingCode: "123456"
     });
 
-    const commandResult = await registry.forwardCommand(pairResult.deviceToken || "", "session.start", {
-      action: "exec",
+    const commandResult = await registry.forwardCommand(pairResult.deviceToken || "", "frontend.prompt", {
+      conversationId: "conversation_1",
       prompt: "run tests"
     });
     const unauthorized = await registry.forwardCommand("bad-token", "status");
 
     expect(commandResult).toMatchObject({ ok: true });
     expect(handleCommand).toHaveBeenCalledWith(expect.objectContaining({
-      command: "session.start",
+      command: "frontend.prompt",
       payload: {
-        action: "exec",
+        conversationId: "conversation_1",
         prompt: "run tests"
       }
     }));

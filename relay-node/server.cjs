@@ -96,21 +96,58 @@ async function handleHttpRequest(req, res) {
     return;
   }
 
+  if (req.method === "GET" && url.pathname === "/api/v1/frontend/state") {
+    const result = await forwardPhoneCommand(req, "frontend.state");
+    sendJson(req, res, statusCodeFor(result), result);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/v1/frontend/select") {
+    const result = await forwardPhoneCommand(req, "frontend.select", await readJsonBody(req));
+    sendJson(req, res, statusCodeFor(result), result);
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/api/v1/frontend/prompt") {
+    const result = await forwardPhoneCommand(req, "frontend.prompt", await readJsonBody(req));
+    sendJson(req, res, statusCodeFor(result), result);
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/api/v1/frontend/feedback") {
+    const result = await forwardPhoneCommand(req, "frontend.feedback", {
+      conversationId: trim(url.searchParams.get("conversationId") || "", 160)
+    });
+    sendJson(req, res, statusCodeFor(result), result);
+    return;
+  }
+
   if (req.method === "POST" && url.pathname === "/api/v1/session/start") {
-    const result = await forwardPhoneCommand(req, "session.start", await readJsonBody(req));
+    const body = await readJsonBody(req);
+    const result = await forwardPhoneCommand(req, "frontend.prompt", {
+      conversationId: trim(body.conversationId || "", 160),
+      prompt: trim(body.prompt || "", 12000),
+      legacyAction: trim(body.action || "", 40)
+    });
     sendJson(req, res, statusCodeFor(result), result);
     return;
   }
 
   if (req.method === "POST" && url.pathname === "/api/v1/session/stop") {
-    const result = await forwardPhoneCommand(req, "session.stop", await readJsonBody(req));
-    sendJson(req, res, statusCodeFor(result), result);
+    sendJson(req, res, 410, {
+      ok: false,
+      error: "Mobile session stop is no longer supported; use the desktop frontend controls.",
+      status: 410
+    });
     return;
   }
 
   if (req.method === "POST" && url.pathname === "/api/v1/terminal/input") {
-    const result = await forwardPhoneCommand(req, "terminal.input", await readJsonBody(req));
-    sendJson(req, res, statusCodeFor(result), result);
+    sendJson(req, res, 410, {
+      ok: false,
+      error: "Terminal input is no longer supported from the mobile frontend.",
+      status: 410
+    });
     return;
   }
 

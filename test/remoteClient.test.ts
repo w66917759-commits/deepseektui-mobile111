@@ -157,10 +157,91 @@ describe("createRemoteClient", () => {
 
     expect(authHeader).toBe("Bearer device-token");
     expect(requestBody).toEqual({
+      conversationId: "",
       action: "exec",
       prompt: "run tests"
     });
     expect(result.status?.harness.running).toBe(true);
+  });
+
+  it("reads and selects desktop frontend conversations", async () => {
+    const requests: Array<{ method?: string; url?: string; body: unknown; auth: string }> = [];
+    const relayUrl = await startMockRelay((request, body) => {
+      requests.push({
+        method: request.method,
+        url: request.url,
+        body,
+        auth: String(request.headers.authorization || "")
+      });
+      if (request.url === "/api/v1/frontend/state") {
+        return { payload: { ok: true, state: mockFrontendState() } };
+      }
+      return { payload: { ok: true, state: mockFrontendState({ activeConversationId: "conversation_2" }) } };
+    });
+
+    const client = createRemoteClient({ relayUrl, deviceToken: "device-token" });
+    const state = await client.frontendState();
+    const selected = await client.selectFrontend({
+      projectId: "project_1",
+      conversationId: "conversation_2"
+    });
+
+    expect(requests.map((request) => request.url)).toEqual([
+      "/api/v1/frontend/state",
+      "/api/v1/frontend/select"
+    ]);
+    expect(requests.every((request) => request.auth === "Bearer device-token")).toBe(true);
+    expect(requests[1].body).toEqual({
+      projectId: "project_1",
+      conversationId: "conversation_2"
+    });
+    expect(state.state.projects[0].name).toBe("Demo Project");
+    expect(selected.state?.activeConversationId).toBe("conversation_2");
+  });
+
+  it("sends prompts and fetches feedback through frontend endpoints", async () => {
+    const requests: Array<{ method?: string; url?: string; body: unknown }> = [];
+    const relayUrl = await startMockRelay((request, body) => {
+      requests.push({ method: request.method, url: request.url, body });
+      if (request.url?.startsWith("/api/v1/frontend/feedback")) {
+        return {
+          payload: {
+            ok: true,
+            feedback: mockFrontendState().feedback,
+            state: mockFrontendState()
+          }
+        };
+      }
+      return {
+        payload: {
+          ok: true,
+          accepted: true,
+          state: mockFrontendState({ busy: true })
+        }
+      };
+    });
+
+    const client = createRemoteClient({ relayUrl, deviceToken: "device-token" });
+    const promptResult = await client.sendFrontendPrompt({
+      conversationId: "conversation_1",
+      prompt: "  summarize current state  "
+    });
+    const feedbackResult = await client.frontendFeedback("conversation_1");
+
+    expect(requests[0]).toMatchObject({
+      method: "POST",
+      url: "/api/v1/frontend/prompt",
+      body: {
+        conversationId: "conversation_1",
+        prompt: "summarize current state"
+      }
+    });
+    expect(requests[1]).toMatchObject({
+      method: "GET",
+      url: "/api/v1/frontend/feedback?conversationId=conversation_1"
+    });
+    expect(promptResult.accepted).toBe(true);
+    expect(feedbackResult.feedback?.content).toBe("Done.");
   });
 
   it("sends terminal input to an active desktop session", async () => {
@@ -263,6 +344,57 @@ function mockDevice(id: string) {
   };
 }
 
+function mockFrontendState(overrides: { activeConversationId?: string; busy?: boolean } = {}) {
+  const activeConversationId = overrides.activeConversationId || "conversation_1";
+  const busy = overrides.busy ?? false;
+  return {
+    ready: true,
+    activeProjectId: "project_1",
+    activeConversationId,
+    projects: [{
+      id: "project_1",
+      name: "Demo Project",
+      workspacePath: "/tmp/project",
+      sessionCount: 2,
+      updatedAt: "2026-05-19T00:00:00.000Z",
+      active: true
+    }],
+    conversations: [
+      {
+        id: "conversation_1",
+        projectId: "project_1",
+        title: "First conversation",
+        updatedAt: "2026-05-19T00:00:00.000Z",
+        messageCount: 4,
+        hasFeedback: true,
+        busy,
+        active: activeConversationId === "conversation_1"
+      },
+      {
+        id: "conversation_2",
+        projectId: "project_1",
+        title: "Second conversation",
+        updatedAt: "2026-05-19T00:01:00.000Z",
+        messageCount: 2,
+        hasFeedback: false,
+        busy: false,
+        active: activeConversationId === "conversation_2"
+      }
+    ],
+    feedback: {
+      conversationId: activeConversationId,
+      messageId: "message_1",
+      title: "任务完成",
+      content: "Done.",
+      source: "task-board-summary",
+      pending: busy,
+      updatedAt: "2026-05-19T00:00:00.000Z"
+    },
+    busy,
+    updatedAt: "2026-05-19T00:00:00.000Z"
+  };
+}
+
 function mockStatus(overrides: { running?: boolean; remoteControl?: boolean } = {}) {
   const running = overrides.running ?? false;
   return {
@@ -295,6 +427,7 @@ function mockStatus(overrides: { running?: boolean; remoteControl?: boolean } = 
     lastUpdateNotice: null,
     localUrl: "http://127.0.0.1:8765",
     mobileRemoteControlEnabled: overrides.remoteControl ?? false,
+    frontend: mockFrontendState(),
     port: 8765,
     relay: {
       connected: true,

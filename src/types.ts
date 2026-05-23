@@ -75,6 +75,47 @@ export type UpdateNotice = {
   createdAt: string;
 };
 
+export type RemoteFrontendProject = {
+  id: string;
+  name: string;
+  workspacePath: string;
+  sessionCount: number;
+  updatedAt: string;
+  active: boolean;
+};
+
+export type RemoteFrontendConversation = {
+  id: string;
+  projectId: string;
+  title: string;
+  updatedAt: string;
+  messageCount: number;
+  hasFeedback: boolean;
+  busy: boolean;
+  active: boolean;
+};
+
+export type RemoteFrontendFeedback = {
+  conversationId: string;
+  messageId: string;
+  title: string;
+  content: string;
+  source: "task-board-summary" | "assistant-message" | "none";
+  pending: boolean;
+  updatedAt: string;
+};
+
+export type RemoteFrontendState = {
+  ready: boolean;
+  activeProjectId: string;
+  activeConversationId: string;
+  projects: RemoteFrontendProject[];
+  conversations: RemoteFrontendConversation[];
+  feedback: RemoteFrontendFeedback | null;
+  busy: boolean;
+  updatedAt: string;
+};
+
 export type RemoteBridgeStatus = {
   enabled: boolean;
   running: boolean;
@@ -95,6 +136,7 @@ export type RemoteBridgeStatus = {
   mobileRemoteControlEnabled: boolean;
   updatePushEnabled: boolean;
   auth: RemoteAuthState;
+  frontend?: RemoteFrontendState;
   sseClients: number;
   terminalPreview: string;
   lastTerminalAt: string;
@@ -133,6 +175,32 @@ export type StartSessionResponse = {
     session?: ActiveSession;
   };
   status?: RemoteBridgeStatus;
+  error?: string;
+};
+
+export type FrontendStateResponse = {
+  ok: boolean;
+  state: RemoteFrontendState;
+  error?: string;
+};
+
+export type FrontendSelectResponse = {
+  ok: boolean;
+  state?: RemoteFrontendState;
+  error?: string;
+};
+
+export type FrontendPromptResponse = {
+  ok: boolean;
+  accepted?: boolean;
+  state?: RemoteFrontendState;
+  error?: string;
+};
+
+export type FrontendFeedbackResponse = {
+  ok: boolean;
+  feedback?: RemoteFrontendFeedback | null;
+  state?: RemoteFrontendState;
   error?: string;
 };
 

@@ -1,6 +1,14 @@
 import type { RemoteBridgeStatus, RemoteDevice } from "./types";
 
-export type RelayCommand = "status" | "session.start" | "session.stop" | "terminal.input";
+export type RelayCommand =
+  | "status"
+  | "frontend.state"
+  | "frontend.select"
+  | "frontend.prompt"
+  | "frontend.feedback"
+  | "session.start"
+  | "session.stop"
+  | "terminal.input";
 
 export type RelayDesktopMessage = {
   type: "device.paired";

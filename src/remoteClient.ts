@@ -1,5 +1,9 @@
 import type {
   ConnectionState,
+  FrontendFeedbackResponse,
+  FrontendPromptResponse,
+  FrontendSelectResponse,
+  FrontendStateResponse,
   PairResponse,
   RemoteSessionAction,
   StartSessionResponse,
@@ -86,14 +90,47 @@ export function createRemoteClient(connection: Pick<ConnectionState, "relayUrl" 
     startSession(payload: {
       action: RemoteSessionAction;
       prompt: string;
+      conversationId?: string;
     }) {
       return request<StartSessionResponse>("/api/v1/session/start", {
         method: "POST",
         body: JSON.stringify({
+          conversationId: payload.conversationId || "",
           action: payload.action,
           prompt: payload.prompt.trim()
         })
       });
+    },
+    frontendState() {
+      return request<FrontendStateResponse>("/api/v1/frontend/state");
+    },
+    selectFrontend(payload: {
+      projectId: string;
+      conversationId?: string;
+    }) {
+      return request<FrontendSelectResponse>("/api/v1/frontend/select", {
+        method: "POST",
+        body: JSON.stringify({
+          projectId: payload.projectId,
+          conversationId: payload.conversationId || ""
+        })
+      });
+    },
+    sendFrontendPrompt(payload: {
+      conversationId: string;
+      prompt: string;
+    }) {
+      return request<FrontendPromptResponse>("/api/v1/frontend/prompt", {
+        method: "POST",
+        body: JSON.stringify({
+          conversationId: payload.conversationId,
+          prompt: payload.prompt.trim()
+        })
+      });
+    },
+    frontendFeedback(conversationId: string) {
+      const search = conversationId ? `?conversationId=${encodeURIComponent(conversationId)}` : "";
+      return request<FrontendFeedbackResponse>(`/api/v1/frontend/feedback${search}`);
     },
     stopSession() {
       return request<StopSessionResponse>("/api/v1/session/stop", {

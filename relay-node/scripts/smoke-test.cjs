@@ -83,6 +83,24 @@ async function main() {
   const statusResponse = await statusPromise;
   assert.equal(statusResponse.ok, true);
 
+  const frontendPromise = nextWsMessage(ws);
+  const frontendStatePromise = requestJson("GET", "/api/v1/frontend/state", null, pairResponse.deviceToken);
+  const frontendCommand = await frontendPromise;
+  assert.equal(frontendCommand.type, "command");
+  assert.equal(frontendCommand.command, "frontend.state");
+  ws.send(JSON.stringify({
+    type: "command.result",
+    requestId: frontendCommand.requestId,
+    payload: { ok: true, state: { ready: true, projects: [], conversations: [] } }
+  }));
+  const frontendStateResponse = await frontendStatePromise;
+  assert.equal(frontendStateResponse.ok, true);
+  assert.equal(frontendStateResponse.state.ready, true);
+
+  const terminalResponse = await requestJson("POST", "/api/v1/terminal/input", { data: "/status\n" }, pairResponse.deviceToken);
+  assert.equal(terminalResponse.ok, false);
+  assert.equal(terminalResponse.status, 410);
+
   console.log("Relay smoke test passed");
 }
 

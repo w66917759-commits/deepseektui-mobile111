@@ -3,14 +3,13 @@ import type { ReactNode } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
+  FolderOpen,
   Link2,
-  Play,
+  MessageSquare,
   RefreshCw,
   Send,
   ShieldCheck,
   Smartphone,
-  Square,
-  Terminal,
   Trash2,
   Wifi,
   WifiOff
@@ -27,21 +26,17 @@ import {
   validateRelayUrl
 } from "./pairing";
 import { clearConnection, loadConnection, saveConnection } from "./storage";
-import type { ConnectionState, PairingStage, RemoteBridgeStatus, RemoteDevice, RemoteSessionAction } from "./types";
+import type {
+  ConnectionState,
+  PairingStage,
+  RemoteBridgeStatus,
+  RemoteDevice,
+  RemoteFrontendFeedback,
+  RemoteFrontendState
+} from "./types";
 
 type MessageKind = "info" | "error";
-type BusyAction = "pair" | "status" | "start-session" | "terminal-input" | "stop-session";
-
-const SESSION_ACTIONS: Array<{ value: RemoteSessionAction; label: string }> = [
-  { value: "exec", label: "一次性任务" },
-  { value: "plan", label: "只做方案" },
-  { value: "tui", label: "打开 TUI" },
-  { value: "continue", label: "继续会话" },
-  { value: "sessions", label: "会话列表" },
-  { value: "doctor", label: "诊断环境" },
-  { value: "setup", label: "初始化设置" },
-  { value: "mcp-init", label: "初始化 MCP" }
-];
+type BusyAction = "pair" | "status" | "frontend-state" | "frontend-select" | "frontend-prompt" | "frontend-feedback";
 
 type InitialState = {
   connection: ConnectionState;
@@ -70,12 +65,12 @@ export function App() {
   const [draft, setDraft] = useState<ConnectionState>(initialState.draft);
   const [pairingCode, setPairingCode] = useState(initialState.pairingCode);
   const [status, setStatus] = useState<RemoteBridgeStatus | null>(null);
+  const [frontendState, setFrontendState] = useState<RemoteFrontendState | null>(null);
+  const [feedback, setFeedback] = useState<RemoteFrontendFeedback | null>(null);
   const [pairedDevice, setPairedDevice] = useState<RemoteDevice | null>(null);
   const [busyAction, setBusyAction] = useState<BusyAction | null>(null);
   const [statusError, setStatusError] = useState(false);
-  const [remoteAction, setRemoteAction] = useState<RemoteSessionAction>("exec");
   const [remotePrompt, setRemotePrompt] = useState("");
-  const [terminalInput, setTerminalInput] = useState("");
   const [message, setMessage] = useState(
     initialState.ignoredTokenParam ? "URL 中的 token 参数已忽略；设备 Token 只保存在当前浏览器。" : ""
   );
@@ -106,15 +101,25 @@ export function App() {
   const remoteControlReady = Boolean(connection.deviceToken && relayConnected && remoteControlEnabled);
   const harnessRunning = Boolean(status?.harness.running);
   const activeSession = status?.harness.activeSession || null;
-  const promptRequired = remoteAction === "exec" || remoteAction === "plan";
-  const canStartRemoteSession = Boolean(remoteControlReady && !busy && (!promptRequired || remotePrompt.trim()));
-  const canSendTerminalInput = Boolean(remoteControlReady && harnessRunning && !busy && terminalInput.trim());
-  const canStopRemoteSession = Boolean(remoteControlReady && harnessRunning && !busy);
+  const currentFrontendState = frontendState || status?.frontend || null;
+  const activeProjectId = currentFrontendState?.activeProjectId || "";
+  const activeConversationId = currentFrontendState?.activeConversationId || "";
+  const activeConversation = currentFrontendState?.conversations.find((conversation) => conversation.id === activeConversationId) || null;
+  const frontendBusy = Boolean(currentFrontendState?.busy || activeConversation?.busy);
+  const canLoadFrontendState = Boolean(remoteControlReady && !busy);
+  const canSendFrontendPrompt = Boolean(remoteControlReady && !busy && !frontendBusy && activeConversationId && remotePrompt.trim());
+  const canRefreshFeedback = Boolean(remoteControlReady && !busy && activeConversationId);
   const transport = formatRelayTransport(relayValidation);
 
   const showMessage = useCallback((text: string, kind: MessageKind = "info") => {
     setMessage(text);
     setMessageKind(kind);
+  }, []);
+
+  const applyFrontendState = useCallback((nextState?: RemoteFrontendState | null) => {
+    if (!nextState) return;
+    setFrontendState(nextState);
+    setFeedback(nextState.feedback || null);
   }, []);
 
   function updateDraft<K extends keyof ConnectionState>(key: K, value: ConnectionState[K]) {
@@ -166,6 +171,7 @@ export function App() {
       setDraft(next);
       setPairingCode("");
       setStatus(result.status || null);
+      applyFrontendState(result.status?.frontend || null);
       setPairedDevice(result.device || null);
       showMessage(`已配对：${result.device?.name || next.deviceName}`);
     } catch (error) {
@@ -192,6 +198,7 @@ export function App() {
     try {
       const result = await client.status();
       setStatus(result.status);
+      applyFrontendState(result.status?.frontend || null);
       if (result.auth) setPairedDevice(result.auth);
       showMessage("桌面端状态已刷新。");
     } catch (error) {
@@ -202,28 +209,98 @@ export function App() {
     }
   }
 
-  async function startRemoteSession() {
+  async function loadFrontendState() {
     if (!remoteControlReady) {
       showMessage("请先完成配对，并在桌面端开启手机远程控制。", "error");
       return;
     }
-    if (promptRequired && !remotePrompt.trim()) {
-      showMessage("请输入要下发给桌面端的指令。", "error");
+
+    setBusyAction("frontend-state");
+    try {
+      const result = await client.frontendState();
+      if (!result.ok) {
+        throw new RemoteError(result.error || "无法读取桌面前端状态。", 400);
+      }
+      applyFrontendState(result.state);
+      showMessage("已读取桌面前端项目和对话。");
+    } catch (error) {
+      showMessage(errorMessage(error), "error");
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function selectFrontendProject(projectId: string) {
+    if (!remoteControlReady) {
+      showMessage("请先完成配对，并在桌面端开启手机远程控制。", "error");
       return;
     }
 
-    setBusyAction("start-session");
+    setBusyAction("frontend-select");
     try {
-      const result = await client.startSession({
-        action: remoteAction,
+      const result = await client.selectFrontend({ projectId });
+      if (!result.ok) {
+        throw new RemoteError(result.error || "桌面端未接受项目选择。", 400);
+      }
+      applyFrontendState(result.state);
+      showMessage("已切换项目。");
+    } catch (error) {
+      showMessage(errorMessage(error), "error");
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function selectFrontendConversation(conversationId: string) {
+    if (!remoteControlReady) {
+      showMessage("请先完成配对，并在桌面端开启手机远程控制。", "error");
+      return;
+    }
+
+    setBusyAction("frontend-select");
+    try {
+      const result = await client.selectFrontend({
+        projectId: activeProjectId,
+        conversationId
+      });
+      if (!result.ok) {
+        throw new RemoteError(result.error || "桌面端未接受对话选择。", 400);
+      }
+      applyFrontendState(result.state);
+      showMessage("已切换对话。");
+    } catch (error) {
+      showMessage(errorMessage(error), "error");
+    } finally {
+      setBusyAction(null);
+    }
+  }
+
+  async function sendFrontendPrompt() {
+    if (!remoteControlReady) {
+      showMessage("请先完成配对，并在桌面端开启手机远程控制。", "error");
+      return;
+    }
+    if (!activeConversationId) {
+      showMessage("请先选择一个桌面端对话。", "error");
+      return;
+    }
+    if (!remotePrompt.trim()) {
+      showMessage("请输入要发送到当前对话的内容。", "error");
+      return;
+    }
+
+    setBusyAction("frontend-prompt");
+    try {
+      const result = await client.sendFrontendPrompt({
+        conversationId: activeConversationId,
         prompt: remotePrompt
       });
       if (!result.ok) {
-        throw new RemoteError(result.error || result.result?.error || "桌面端未接受该指令。", 400);
+        throw new RemoteError(result.error || "桌面端未接受该指令。", 400);
       }
-      if (result.status) setStatus(result.status);
+      applyFrontendState(result.state);
       setRemotePrompt("");
-      showMessage("指令已下发到桌面端。");
+      showMessage("内容已发送到桌面前端对话。完成后刷新反馈即可查看结果。");
     } catch (error) {
       showMessage(errorMessage(error), "error");
     } finally {
@@ -231,47 +308,25 @@ export function App() {
     }
   }
 
-  async function sendTerminalInput() {
+  async function refreshFrontendFeedback() {
     if (!remoteControlReady) {
       showMessage("请先完成配对，并在桌面端开启手机远程控制。", "error");
       return;
     }
-    if (!harnessRunning) {
-      showMessage("桌面端当前没有运行中的终端会话。", "error");
-      return;
-    }
-    if (!terminalInput.trim()) {
-      showMessage("请输入要发送到终端的内容。", "error");
+    if (!activeConversationId) {
+      showMessage("请先选择一个桌面端对话。", "error");
       return;
     }
 
-    setBusyAction("terminal-input");
+    setBusyAction("frontend-feedback");
     try {
-      const data = terminalInput.endsWith("\n") ? terminalInput : `${terminalInput}\n`;
-      const result = await client.sendTerminalInput(data);
+      const result = await client.frontendFeedback(activeConversationId);
       if (!result.ok) {
-        throw new RemoteError(result.error || "桌面端未接受终端输入。", 400);
+        throw new RemoteError(result.error || "无法读取对话反馈。", 400);
       }
-      setTerminalInput("");
-      showMessage("终端输入已发送。");
-    } catch (error) {
-      showMessage(errorMessage(error), "error");
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
-  async function stopRemoteSession() {
-    if (!remoteControlReady) {
-      showMessage("请先完成配对，并在桌面端开启手机远程控制。", "error");
-      return;
-    }
-
-    setBusyAction("stop-session");
-    try {
-      const result = await client.stopSession();
-      if (result.status) setStatus(result.status);
-      showMessage(result.result?.ok === false ? "桌面端当前没有运行中的任务。" : "已请求停止桌面任务。");
+      if (result.state) applyFrontendState(result.state);
+      setFeedback(result.feedback || result.state?.feedback || null);
+      showMessage("反馈已刷新。");
     } catch (error) {
       showMessage(errorMessage(error), "error");
     } finally {
@@ -284,6 +339,8 @@ export function App() {
     setConnection(next);
     setDraft(next);
     setStatus(null);
+    setFrontendState(null);
+    setFeedback(null);
     setPairedDevice(null);
     setPairingCode("");
     setStatusError(false);
@@ -374,15 +431,15 @@ export function App() {
         ) : null}
       </section>
 
-      <details className="panel mobile-details control-panel" open={remoteControlReady || harnessRunning}>
+      <details className="panel mobile-details control-panel" open={remoteControlReady}>
         <summary>
           <span>
-            <small>远程下发</small>
-            <strong>控制桌面端</strong>
+            <small>前端调度</small>
+            <strong>{activeConversation?.title || "选择桌面端对话"}</strong>
           </span>
           <SecurityBadge
             tone={remoteControlReady ? "ok" : remoteControlEnabled ? "warn" : "muted"}
-            label={remoteControlReady ? "可下发" : remoteControlEnabled ? "待刷新" : "未开启"}
+            label={remoteControlReady ? "已连接前端" : remoteControlEnabled ? "待刷新" : "未开启"}
           />
         </summary>
 
@@ -395,94 +452,92 @@ export function App() {
               tone={relayConnected ? "ok" : "muted"}
             />
             <StatusChip
-              icon={<ShieldCheck size={15} />}
-              label="远控"
-              value={remoteControlEnabled ? "开启" : "关闭"}
-              tone={remoteControlEnabled ? "ok" : "warn"}
+              icon={<FolderOpen size={15} />}
+              label="项目"
+              value={currentFrontendState?.projects.length ? String(currentFrontendState.projects.length) : "未读取"}
+              tone={currentFrontendState?.projects.length ? "ok" : "muted"}
             />
             <StatusChip
-              icon={<Play size={16} />}
-              label="任务"
-              value={harnessRunning ? "运行中" : "空闲"}
-              tone={harnessRunning ? "warn" : "muted"}
+              icon={<MessageSquare size={16} />}
+              label="对话"
+              value={activeConversation ? "已选择" : "未选择"}
+              tone={activeConversation ? "ok" : "muted"}
             />
           </div>
 
           <div className="control-form">
             <label>
-              执行方式
+              项目
               <select
-                value={remoteAction}
-                onChange={(event) => setRemoteAction(event.target.value as RemoteSessionAction)}
-                disabled={busy || !remoteControlReady}
+                value={activeProjectId}
+                onChange={(event) => void selectFrontendProject(event.target.value)}
+                disabled={busy || !remoteControlReady || !currentFrontendState?.projects.length}
               >
-                {SESSION_ACTIONS.map((action) => (
-                  <option key={action.value} value={action.value}>
-                    {action.label}
+                {!currentFrontendState?.projects.length ? <option value="">暂无项目</option> : null}
+                {currentFrontendState?.projects.map((project) => (
+                  <option key={project.id} value={project.id}>
+                    {project.name} · {project.sessionCount}
                   </option>
                 ))}
               </select>
             </label>
 
             <label>
-              下发指令
+              对话
+              <select
+                value={activeConversationId}
+                onChange={(event) => void selectFrontendConversation(event.target.value)}
+                disabled={busy || !remoteControlReady || !currentFrontendState?.conversations.length}
+              >
+                {!currentFrontendState?.conversations.length ? <option value="">暂无对话</option> : null}
+                {currentFrontendState?.conversations.map((conversation) => (
+                  <option key={conversation.id} value={conversation.id}>
+                    {conversation.title} · {conversation.messageCount}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <div className="secondary-actions left">
+              <button type="button" className="quiet" onClick={loadFrontendState} disabled={!canLoadFrontendState}>
+                <RefreshCw size={15} aria-hidden />
+                {busyAction === "frontend-state" ? "读取中" : "读取项目/对话"}
+              </button>
+              <button type="button" className="quiet" onClick={refreshFrontendFeedback} disabled={!canRefreshFeedback}>
+                <RefreshCw size={15} aria-hidden />
+                {busyAction === "frontend-feedback" ? "刷新中" : "刷新反馈"}
+              </button>
+            </div>
+
+            <label>
+              发送到当前对话
               <textarea
                 value={remotePrompt}
                 onChange={(event) => setRemotePrompt(event.target.value)}
-                placeholder={promptRequired ? "例如：运行测试并总结失败原因" : "该执行方式可不填写指令"}
-                disabled={busy || !remoteControlReady}
+                placeholder="例如：检查当前实现并给出下一步建议"
+                disabled={busy || !remoteControlReady || !activeConversationId || frontendBusy}
               />
             </label>
 
             <div className="primary-action">
-              <button type="button" className="primary" onClick={startRemoteSession} disabled={!canStartRemoteSession}>
+              <button type="button" className="primary" onClick={sendFrontendPrompt} disabled={!canSendFrontendPrompt}>
                 <Send size={16} aria-hidden />
-                {busyAction === "start-session" ? "下发中" : "下发任务"}
+                {busyAction === "frontend-prompt" ? "发送中" : "发送到桌面前端"}
               </button>
             </div>
-
-            {harnessRunning ? (
-              <button type="button" className="quiet" onClick={stopRemoteSession} disabled={!canStopRemoteSession}>
-                <Square size={15} aria-hidden />
-                {busyAction === "stop-session" ? "停止中" : "停止任务"}
-              </button>
-            ) : null}
           </div>
 
-          <details className="mini-details">
-            <summary>
-              <Terminal size={15} aria-hidden />
-              终端输入
-            </summary>
-            <div className="terminal-control">
-              <label>
-                输入内容
-                <textarea
-                  value={terminalInput}
-                  onChange={(event) => setTerminalInput(event.target.value)}
-                  placeholder="/status"
-                  disabled={busy || !remoteControlReady || !harnessRunning}
-                />
-              </label>
-              <button type="button" onClick={sendTerminalInput} disabled={!canSendTerminalInput}>
-                <Terminal size={16} aria-hidden />
-                {busyAction === "terminal-input" ? "发送中" : "发送输入"}
-              </button>
+          <section className={feedback?.content ? "feedback-card" : "feedback-card empty"}>
+            <div>
+              <span className="section-label">总结反馈</span>
+              <h2>{feedback?.title || (feedback?.pending ? "等待桌面端完成" : "暂无反馈")}</h2>
             </div>
-          </details>
-
-          {status?.terminalPreview ? (
-            <details className="mini-details">
-              <summary>最近终端输出</summary>
-              <pre className="terminal-preview" aria-label="最近终端输出">
-                {status.terminalPreview}
-              </pre>
-            </details>
-          ) : null}
+            {feedback?.content ? <p>{feedback.content}</p> : <p>这里显示桌面前端当前对话里已有的最近反馈，不会重新生成总结。</p>}
+          </section>
 
           <p className={remoteControlReady ? "inline-note" : "inline-warning"}>
             {remoteControlReady ? <CheckCircle2 size={15} aria-hidden /> : <AlertTriangle size={15} aria-hidden />}
-            {remoteControlReady ? "手机已具备下发权限。" : "需要桌面端开启 Relay 和手机远程控制后才能下发。"}
+            {remoteControlReady ? "手机端只调度桌面前端能力，不直接写入 CLI 终端。" : "需要桌面端开启 Relay 和手机远程控制后才能读取前端。"}
           </p>
         </div>
       </details>
@@ -499,8 +554,9 @@ export function App() {
         <div className="details-body">
           <div className="meta-list">
             <InfoRow label="设备名" value={pairedDevice?.name || connection.deviceName || draft.deviceName || "未命名"} />
-            <InfoRow label="任务" value={harnessRunning ? `运行中${activeSession ? ` · ${activeSession.pid}` : ""}` : "空闲"} />
-            <InfoRow label="工作目录" value={activeSession?.cwd || status?.harness.lastExit?.session?.cwd || "使用桌面端当前设置"} />
+            <InfoRow label="CLI 状态" value={harnessRunning ? `运行中${activeSession ? ` · ${activeSession.pid}` : ""}` : "空闲"} />
+            <InfoRow label="当前项目" value={currentFrontendState?.projects.find((project) => project.id === activeProjectId)?.name || "未选择"} />
+            <InfoRow label="当前对话" value={activeConversation?.title || "未选择"} />
             <InfoRow label="Desktop ID" value={connection.desktopId || status?.auth.desktopId || "未刷新"} />
             <InfoRow label="Device ID" value={connection.deviceId || pairedDevice?.id || "未刷新"} />
             <InfoRow label="Relay" value={connection.relayUrl || draft.relayUrl || "未配置"} />
