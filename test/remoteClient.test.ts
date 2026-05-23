@@ -1,6 +1,6 @@
 import { createServer } from "node:http";
 import type { AddressInfo, IncomingMessage, ServerResponse } from "node:http";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createRemoteClient } from "../src/remoteClient";
 
 type JsonHandler = (request: IncomingMessage, body: unknown) => {
@@ -11,6 +11,7 @@ type JsonHandler = (request: IncomingMessage, body: unknown) => {
 const servers: Array<{ close: () => Promise<void> }> = [];
 
 afterEach(async () => {
+  vi.unstubAllGlobals();
   await Promise.all(servers.splice(0).map((server) => server.close()));
 });
 
@@ -130,6 +131,35 @@ describe("createRemoteClient", () => {
       message: "无法连接 DeepSeek TUI Relay",
       status: 0
     });
+  });
+
+  it("falls back to the same-origin relay proxy when the production relay is unreachable in the browser", async () => {
+    vi.stubGlobal("window", { location: { origin: "https://deepseektuidesktop.cn" } });
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (url === "https://relay.deepseektuidesktop.cn/api/v1/status") {
+        throw new TypeError("network failed");
+      }
+      expect(url).toBe("https://deepseektuidesktop.cn/api/relay/api/v1/status");
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer device-token");
+      return new Response(JSON.stringify({
+        ok: true,
+        auth: mockDevice("device_1"),
+        status: mockStatus()
+      }), {
+        headers: { "content-type": "application/json" },
+        status: 200
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const client = createRemoteClient({
+      relayUrl: "https://relay.deepseektuidesktop.cn",
+      deviceToken: "device-token"
+    });
+    const result = await client.status();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.status.auth.desktopId).toBe("desktop_1");
   });
 
   it("starts a desktop session from a paired device", async () => {
