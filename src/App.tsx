@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import {
   AlertTriangle,
@@ -75,6 +75,7 @@ export function App() {
     initialState.ignoredTokenParam ? "URL 中的 token 参数已忽略；设备 Token 只保存在当前浏览器。" : ""
   );
   const [messageKind, setMessageKind] = useState<MessageKind>("info");
+  const lastAutoRefreshKey = useRef("");
 
   const pageProtocol = window.location.protocol;
   const pageHostname = window.location.hostname;
@@ -121,6 +122,58 @@ export function App() {
     setFrontendState(nextState);
     setFeedback(nextState.feedback || null);
   }, []);
+
+  const applyStatusPayload = useCallback((nextStatus?: RemoteBridgeStatus | null, nextAuth?: RemoteDevice | null) => {
+    if (!nextStatus) return;
+    setStatus(nextStatus);
+    applyFrontendState(nextStatus.frontend || null);
+    if (nextAuth) setPairedDevice(nextAuth);
+  }, [applyFrontendState]);
+
+  const syncConnectionStatus = useCallback(async (
+    targetConnection: ConnectionState,
+    options: { action?: BusyAction; silent?: boolean } = {}
+  ) => {
+    if (!targetConnection.relayUrl || !targetConnection.deviceToken) {
+      if (!options.silent) showMessage("请先用配对码完成设备绑定。", "error");
+      return false;
+    }
+
+    const validation = validateRelayUrl(targetConnection.relayUrl, pageProtocol, pageHostname);
+    if (!validation.ok) {
+      if (!options.silent) showMessage(validation.message, "error");
+      return false;
+    }
+
+    if (options.action) setBusyAction(options.action);
+    setStatusError(false);
+    try {
+      const nextClient = createRemoteClient(targetConnection);
+      const result = await nextClient.status();
+      applyStatusPayload(result.status, result.auth || null);
+
+      if (result.status?.relay?.connected && result.status.mobileRemoteControlEnabled) {
+        const frontendResult = await nextClient.frontendState();
+        if (frontendResult.ok) applyFrontendState(frontendResult.state);
+      }
+
+      if (!options.silent) showMessage("桌面端状态已刷新。");
+      return true;
+    } catch (error) {
+      setStatusError(true);
+      if (!options.silent) showMessage(errorMessage(error), "error");
+      return false;
+    } finally {
+      if (options.action) setBusyAction(null);
+    }
+  }, [applyFrontendState, applyStatusPayload, pageHostname, pageProtocol, showMessage]);
+
+  useEffect(() => {
+    const key = `${connection.relayUrl}|${connection.deviceToken}`;
+    if (!connection.deviceToken || !connection.relayUrl || lastAutoRefreshKey.current === key) return;
+    lastAutoRefreshKey.current = key;
+    void syncConnectionStatus(connection, { action: "status", silent: true });
+  }, [connection, syncConnectionStatus]);
 
   function updateDraft<K extends keyof ConnectionState>(key: K, value: ConnectionState[K]) {
     setDraft((current) => ({ ...current, [key]: value, deviceToken: "", deviceId: "", desktopId: "", relaySessionId: "" }));
@@ -173,7 +226,8 @@ export function App() {
       setStatus(result.status || null);
       applyFrontendState(result.status?.frontend || null);
       setPairedDevice(result.device || null);
-      showMessage(`已配对：${result.device?.name || next.deviceName}`);
+      const synced = await syncConnectionStatus(next, { silent: true });
+      showMessage(synced ? "已配对，并已同步桌面前端状态。" : `已配对：${result.device?.name || next.deviceName}。如果前端调度未开启，请点刷新。`, synced ? "info" : "error");
     } catch (error) {
       showMessage(errorMessage(error), "error");
     } finally {
@@ -187,26 +241,7 @@ export function App() {
       return;
     }
 
-    const validation = validateRelayUrl(connection.relayUrl, pageProtocol, pageHostname);
-    if (!validation.ok) {
-      showMessage(validation.message, "error");
-      return;
-    }
-
-    setBusyAction("status");
-    setStatusError(false);
-    try {
-      const result = await client.status();
-      setStatus(result.status);
-      applyFrontendState(result.status?.frontend || null);
-      if (result.auth) setPairedDevice(result.auth);
-      showMessage("桌面端状态已刷新。");
-    } catch (error) {
-      setStatusError(true);
-      showMessage(errorMessage(error), "error");
-    } finally {
-      setBusyAction(null);
-    }
+    await syncConnectionStatus(connection, { action: "status" });
   }
 
   async function loadFrontendState() {
