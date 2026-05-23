@@ -58,6 +58,8 @@ function forwardToRelay(request, relayPath, body) {
       hostname: process.env.RELAY_TARGET_HOST || DEFAULT_RELAY_HOST,
       port: Number(process.env.RELAY_TARGET_PORT || DEFAULT_RELAY_PORT),
       servername,
+      minVersion: "TLSv1.3",
+      maxVersion: "TLSv1.3",
       path: relayPath,
       method: request.method,
       headers,
